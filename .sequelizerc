@@ -1,0 +1,10 @@
+// Tells sequelize-cli (the migration/seed command-line tool) where our
+// database config, models, migrations and seeders live.
+const path = require('path');
+
+module.exports = {
+  config: path.resolve('config', 'database.js'),
+  'models-path': path.resolve('models'),
+  'migrations-path': path.resolve('migrations'),
+  'seeders-path': path.resolve('seeders'),
+};

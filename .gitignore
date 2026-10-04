@@ -1,0 +1,13 @@
+# Dependencies (reinstalled with `npm install`)
+node_modules/
+
+# Secrets: never commit real keys or passwords
+.env
+*.pem
+*.crt
+
+# Logs and OS clutter
+logs/
+*.log
+npm-debug.log*
+.DS_Store
