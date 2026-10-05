@@ -3,8 +3,11 @@ node_modules/
 
 # Secrets: never commit real keys or passwords
 .env
+.env.*
+!.env.example
 *.pem
 *.crt
+.env.production
 
 # Logs and OS clutter
 logs/
