@@ -192,13 +192,16 @@ Commit and push the project. Check first that `.env` is **not** included: `git s
    Don't set `PORT`; Render provides it.
 
 ### 4. Starting data (once)
-Run the seeders **once** against the Aiven database from your computer. Put the production database values in front of the command; they only apply to this one command:
-```bash
-NODE_ENV=production DB_HOST=<aiven-host> DB_PORT=<port> DB_NAME=<db> DB_USER=<user> DB_PASSWORD=<password> \
-DB_SSL=true DB_CA_CERT="$(cat ca.pem)" ADMIN_EMAIL=<admin email> ADMIN_PASSWORD=<strong password> \
-npx sequelize-cli db:seed:all
-```
-(Keep `ca.pem` outside the project folder, or at least never commit it: `*.pem` is already in `.gitignore`.)
+Render's build only creates the **tables**. The starting data (categories, the 41 products with photos, settings, the admin and the demo data) is added **once**, from your computer:
+1. Create **`.env.production`** in the project folder with the Aiven values: `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`, `DB_SSL=true`, `DB_CA_CERT` (the whole certificate in double quotes; line breaks are fine), and the `ADMIN_EMAIL` and `ADMIN_PASSWORD` for the live admin account. **It's git-ignored** (every `.env.*` file except `.env.example`), so it's never committed.
+2. Run:
+   ```bash
+   npm run seed:production
+   ```
+   It first prints which database it's about to fill (host and name, never the password), and stops with a clear message if a setting is missing.
+3. Check `https://<your-render-service>.onrender.com/api/products`: you should see 41 products with photos.
+
+Run it only once: a second run fails on the unique rules (for example category slugs), which stops the data from being duplicated. Until it has run, `/api/health` is fine, but `/api/products` answers 500, because the settings (like the USD rate) don't exist yet.
 
 ### 5. Paystack webhook
 In the Paystack dashboard (**test mode**), go to **Settings → API Keys & Webhooks** and set the **Test Webhook URL** to:
