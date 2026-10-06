@@ -1,8 +1,10 @@
 /*
  * services/email/email.service.js
  *
- * The only place that talks to the SMTP server (Mailtrap's sandbox in
- * development). Other services build an email with a template from
+ * The only place that talks to the SMTP server. For this project that's
+ * Ethereal (smtp.ethereal.email), Nodemailer's free test service: it accepts
+ * every email but never delivers it to a real inbox; you read the emails on
+ * ethereal.email instead. Other services build an email with a template from
  * ./templates/ and call sendEmail().
  *
  * Rules:
@@ -11,6 +13,9 @@
  *     Most emails are "log and carry on" (see sendEmailSafely); only the login
  *     code (BE12) tells the user to try again.
  *   - Never log the email body: it may contain links, codes or tokens.
+ *     (Exception, development only: with Ethereal, the PREVIEW link of each
+ *     email is printed so you can open it. Ethereal is a test service, and
+ *     nothing is printed in production.)
  */
 const nodemailer = require('nodemailer');
 
@@ -40,7 +45,14 @@ function getTransporter() {
  *          or rejects if sending fails.
  */
 async function sendEmail({ to, subject, html, text }) {
-  await getTransporter().sendMail({ from: process.env.EMAIL_FROM, to, subject, html, text });
+  const info = await getTransporter().sendMail({ from: process.env.EMAIL_FROM, to, subject, html, text });
+
+  // Development + Ethereal only: print the link where this email can be read.
+  // getTestMessageUrl() returns a link only for Ethereal messages (false otherwise).
+  if (process.env.NODE_ENV === 'development') {
+    const preview = nodemailer.getTestMessageUrl(info);
+    if (preview) console.log(`[email] "${subject}" → preview: ${preview}`);
+  }
 }
 
 /*

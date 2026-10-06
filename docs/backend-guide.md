@@ -212,7 +212,7 @@ BE2 lets people create an account, prove they own the email address, log in and 
 | `middleware/validate.js` | Runs a Zod schema; puts clean data in `req.valid` or returns 400 with `fields` |
 | `middleware/rateLimits.js` | Per-IP limits for login, register, verify and resend |
 | `middleware/requireAuth.js` | Protects routes: checks the cookie's JWT, loads the user, sets `req.user` |
-| `services/email/email.service.js` | Sends email through Nodemailer (Mailtrap). `sendEmailSafely` logs failures instead of throwing |
+| `services/email/email.service.js` | Sends email through Nodemailer (Mailtrap at the time; Ethereal since BE22). `sendEmailSafely` logs failures instead of throwing |
 | `services/email/templates/verification.js` | The verification email, in HTML and plain text |
 | `services/email/templates/loginAlert.js` | The login alert email, in HTML and plain text |
 | `utils/tokens.js` | Makes random tokens and hashes them with SHA-256 |
@@ -1596,3 +1596,11 @@ A typo in the file can't put a wrong price in the shop.
 **Why the local database was reset.** Old orders point at products, and the foreign key from `OrderItems` to `Products` is `RESTRICT`: a product that has been ordered can't be deleted, so its order history can never lose its product. So the old catalogue couldn't simply be swapped out underneath the test orders. Since all local data was test data, the database was rebuilt from scratch (every table dropped, then all migrations and seeders run), giving exactly what a new production database gets.
 
 **A bug found by the reset.** The BE9 migration (refunds for checkouts) had an **undo** step that made `Refunds.orderId` required again. That fails when "paid but sold out" refunds exist, because they have no order. Earlier undo tests passed only because that table was empty. MySQL can't roll back table changes, so the failed undo had left the table half-changed. The undo now first deletes the refunds that have no order (they can't exist in the older table shape). This was tested with such a refund present: all 18 migrations undo and redo cleanly.
+
+### Switching the test inbox: Mailtrap → Ethereal
+
+Emails are now sent to **Ethereal** (`smtp.ethereal.email`, port 587), Nodemailer's free test service. Like Mailtrap's sandbox, it accepts every email but delivers none, so no real person is ever emailed during testing. You read the emails at ethereal.email.
+
+**No code had to change to switch.** Only the `SMTP_*` settings in `.env` changed, because all sending goes through one place (`services/email/email.service.js`), which reads its server details from the environment. That's the payoff of keeping outside services behind a single module: changing provider is a configuration change, not a code change. Moving to a real email provider later works the same way.
+
+One small addition: in **development only**, each email's Ethereal **preview link** is printed in the console (`nodemailer.getTestMessageUrl`), so you can open an email straight from the terminal. Nothing is printed in production, keeping the rule that email contents (which can include links and codes) never go into production logs.
