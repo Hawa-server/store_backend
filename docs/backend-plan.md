@@ -82,7 +82,7 @@ Build a secure, production-oriented REST API for an online fashion and beauty st
 | Development server | nodemon |
 | Payments | Paystack (test mode, mobile money) |
 | Images | ImageKit (official Node.js SDK) |
-| Email | Nodemailer + Mailtrap sandbox |
+| Email | Nodemailer + Ethereal test SMTP (was Mailtrap until BE22) |
 | Automated tests (stretch) | Jest + Supertest |
 | Version control | Git + GitHub |
 | API hosting | Render |
@@ -421,7 +421,7 @@ Each task: explain the plan, build it, test it in Thunder Client and MySQL Workb
 
 - Install Node.js, MySQL, Git, and the Thunder Client VS Code extension. Create a local MySQL database.
 - **Paystack:** create a test-mode account (Ghana). Copy the test secret key. Find the test mobile money numbers. Make a test payment, then try a full and a partial refund, to learn whether test refunds work (BE16, BE17). Set the test-mode webhook URL later, in BE22.
-- **Mailtrap:** create a sandbox inbox and copy its SMTP details.
+- **Ethereal** (was Mailtrap): create a free test account at ethereal.email and copy its SMTP details.
 - **ImageKit:** create an account; copy the public key, private key, and URL endpoint; upload the product photos.
 - **GitHub:** create a repository.
 - **Hosting:** create a Render web service, and a free Aiven for MySQL service for production. Save Aiven's host, port, user, password, database name, and CA certificate.

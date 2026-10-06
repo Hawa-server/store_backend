@@ -31,7 +31,7 @@ The frontend is a separate React project. **Everything the frontend needs is in 
 | Validation | Zod (every body, query and URL parameter) |
 | Security | bcryptjs (cost 12), JWT in HTTP-only cookies, helmet, CORS, express-rate-limit, a CSRF header check |
 | Payments | Paystack (test mode, mobile money): server-side verification and signed webhooks |
-| Email | Nodemailer + Mailtrap sandbox |
+| Email | Nodemailer + Ethereal (a free test SMTP service: emails are caught, never delivered) |
 | Images | ImageKit URLs |
 | Hosting | Render (API) + Aiven MySQL with SSL (database) |
 
@@ -57,7 +57,7 @@ docs/              api.md (for the frontend), backend-guide.md (study guide), ca
 
 ## Running it locally
 
-**You need:** Node.js 20 or newer, MySQL 8 (local), a free [Mailtrap](https://mailtrap.io) account (Email Testing → sandbox), and a [Paystack](https://paystack.com) account in **test mode**.
+**You need:** Node.js 20 or newer, MySQL 8 (local), a free [Ethereal](https://ethereal.email) test account (click **Create Ethereal Account** and copy the SMTP details), and a [Paystack](https://paystack.com) account in **test mode**.
 
 1. **Install:**
    ```bash
@@ -99,7 +99,7 @@ npx sequelize-cli db:seed:undo:all      # remove all seeded data
 | `JWT_EXPIRES_IN` | How long a login lasts (`1d`) |
 | `PAYSTACK_SECRET_KEY` | Your Paystack **test** secret key (`sk_test_…`). It's also used to check webhook signatures |
 | `IMAGEKIT_*` | Optional. Only needed for API image uploads, a stretch task that isn't built |
-| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS` | The Mailtrap sandbox SMTP details |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS` | The Ethereal SMTP details: `smtp.ethereal.email`, port `587`, and your Ethereal username and password |
 | `EMAIL_FROM` | The sender shown on emails, e.g. `"Store <no-reply@store.test>"` |
 | `STORE_CONTACT_EMAIL`, `STORE_CONTACT_PHONE` | The store's contact details, shown at the bottom of order emails |
 | `LOGIN_CODE_ENABLED` | `true` = after the password, a 6-digit code is emailed (and printed in the console in development only); `false` = password only. Restart after changing it |
@@ -150,7 +150,9 @@ Import [docs/postman_collection.json](docs/postman_collection.json) into Postman
 
 ### Emails
 
-All emails go to the **Mailtrap sandbox**, not real inboxes:
+All emails go to **Ethereal**, a test service that catches them instead of delivering them, so no real inbox ever gets one. To read them, log in at [ethereal.email](https://ethereal.email/login) with the `SMTP_USER` and `SMTP_PASS` from `.env`, then open **Messages**. In development, the server also prints a **preview link** for every email it sends, e.g. `[email] "Your login code" → preview: https://ethereal.email/message/…`.
+
+The emails are:
 - verification;
 - login alert and login code;
 - order confirmation;
@@ -159,6 +161,8 @@ All emails go to the **Mailtrap sandbox**, not real inboxes:
 - refund.
 
 If an email fails, it's logged and never breaks the order or login. The one exception is the login code, where the user is asked to try again.
+
+Ethereal is free and needs no sign-up, but it's **for testing only**, and its accounts and messages don't last forever. If sending starts failing with a login error, create a new Ethereal account and update `SMTP_USER` and `SMTP_PASS` (locally and on Render). To send real emails later, only the four `SMTP_*` values and `EMAIL_FROM` need to change; no code changes.
 
 ---
 
@@ -187,7 +191,7 @@ Commit and push the project. Check first that `.env` is **not** included: `git s
    - a **new** `JWT_SECRET`, and a strong `ADMIN_PASSWORD`;
    - `CLIENT_URL` = the frontend's address (a placeholder until the frontend is deployed);
    - `TRUST_PROXY_HOPS=1`, or `2` if the frontend forwards `/api`;
-   - the Paystack test key, the Mailtrap SMTP details, the store contact details and `LOGIN_CODE_ENABLED`.
+   - the Paystack test key, the Ethereal SMTP details, the store contact details and `LOGIN_CODE_ENABLED`.
 
    Don't set `PORT`; Render provides it.
 
