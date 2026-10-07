@@ -1604,3 +1604,59 @@ Emails are now sent to **Ethereal** (`smtp.ethereal.email`, port 587), Nodemaile
 **No code had to change to switch.** Only the `SMTP_*` settings in `.env` changed, because all sending goes through one place (`services/email/email.service.js`), which reads its server details from the environment. That's the payoff of keeping outside services behind a single module: changing provider is a configuration change, not a code change. Moving to a real email provider later works the same way.
 
 One small addition: in **development only**, each email's Ethereal **preview link** is printed in the console (`nodemailer.getTestMessageUrl`), so you can open an email straight from the terminal. Nothing is printed in production, keeping the rule that email contents (which can include links and codes) never go into production logs.
+
+---
+
+## BE23 — Admin Product Management (extra task)
+
+### What was built and why
+
+Until now, products came only from the seeders (`docs/catalogue.md`). The admin can now **list, view, add and edit products** through the API, including price, stock, category, the main photo, and whether the product is on sale. The task is described in [docs/BE23-product-management.md](BE23-product-management.md). It's an extra task, added after the plan's BE22.
+
+### New endpoints (admin only)
+
+| Method and path | What it does |
+|---|---|
+| `GET /api/admin/products?search=&category=&status=&page=` | All products (inactive too), A–Z, 20 per page |
+| `GET /api/admin/products/:id` | One product with description, dates and all images |
+| `POST /api/admin/products` | Add a product + its main ImageKit image (one transaction) |
+| `PATCH /api/admin/products/:id` | Change any fields; stock changes need `expectedStock` |
+
+### New or changed files
+
+| File | Purpose |
+|---|---|
+| `services/product/adminProduct.service.js` | **New.** List, get, create, update; the name and category checks; the stock check under a row lock |
+| `validators/adminProduct.validators.js` | **New.** The rules: pesewas, stock 0–100,000, an ImageKit URL (with `?updatedAt=` removed), `expectedStock` required with `stock`, at least one field per edit |
+| `migrations/20261007000001-unique-product-names.js` | **New.** A UNIQUE index on `Products.name` |
+| `controllers/admin.controller.js`, `routes/admin.routes.js` | The four routes on the admin router |
+| `models/Product.js` | `name` marked unique |
+
+**Tables:** none new. `Products` gets a unique name. A product **belongs to** a Category and **has many** ProductImages (one is `isMain`).
+
+### How a request flows (a stock change)
+
+```text
+PATCH /api/admin/products/1   { "stock": 25, "expectedStock": 15 }
+  → csrfCheck → requireAuth → requireAdmin → validate (whole numbers; expectedStock present)
+  → admin.controller.updateProduct
+  → adminProduct.service.updateProduct
+      transaction (retried once on a deadlock):
+        SELECT … FOR UPDATE   (lock product 1: a payment for it must wait)
+        stock still 15?        no → 409 { currentStock }, nothing saved
+        name/category checks → UPDATE Products …; main image if sent
+      COMMIT
+      log: "admin 9 updated product 1 (fields: stock)"
+  ← 200 { product }
+```
+
+### Key concepts
+
+- **Deactivate, don't delete.** Old orders' `OrderItems` point at products with a `RESTRICT` foreign key, so the database won't delete a product that's been ordered. And deleting would break order history anyway. Setting `isActive: false` hides the product everywhere shoppers look (the shop, product pages, carts, checkout), using checks that existed since BE3–BE7. Nothing new was needed for that, only an admin way to flip it.
+- **Lost updates, and the `expectedStock` check.** An admin opens a product (stock 15). Meanwhile a shopper's payment takes one (stock 14). If the admin then saved "25", the sale would be silently lost: the real stock should be 24. So the admin sends the stock they **saw** (`expectedStock: 15`). Under the **same row lock** that payments (BE9) and cancellations (BE16) use, the server compares it with the real stock. If it differs, it refuses with 409 and the current number, and **nothing** is saved. This is called *optimistic concurrency*: assume no one else changed it, but check before writing.
+- **Unique names, twice.** The service checks first, for a clear 409 message. But two admins saving the same name at the same instant would both pass that check, so a **UNIQUE index** in the database refuses the second. Its error is turned into the same 409, never a 500. The column's collation (`utf8mb4_0900_ai_ci`) ignores case and accents, so "pink lip gloss" counts as "Pink Lip Gloss". The test ran 3 creates at once: one 201 and two 409s.
+- **Product and image together.** Creating a product and its main image happen in one transaction, so there's never a product without its photo row.
+- **Prices are snapshots.** Changing a price never changes history. Orders keep the price paid (`OrderItems`), and started checkouts keep theirs (`CheckoutItems`). The test changed a price from 9900 to 15000, and the order still showed 9900.
+- **Safe search.** `LIKE '%…%'` treats `%` and `_` as wildcards, so they're escaped: searching for "%" finds names containing "%", not everything.
+- **Logging what, not the data.** Each change logs who (admin id), which product, and the **names** of the changed fields, never the values or the request body.
+- **Live changes vs seeding.** `docs/catalogue.md` is still what the **seeders** use. Admin changes are live database changes; re-running the seeders on an empty database rebuilds the catalogue, without the admin's changes.

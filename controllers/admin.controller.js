@@ -13,6 +13,7 @@ const adminRefundService = require('../services/refund/adminRefund.service');
 const moderationService = require('../services/review/reviewModeration.service');
 const dashboardService = require('../services/dashboard/dashboard.service');
 const settingsService = require('../services/settings/settings.service');
+const adminProductService = require('../services/product/adminProduct.service');
 const AppError = require('../utils/AppError');
 
 /*
@@ -159,7 +160,51 @@ async function updateLowStockThreshold(req, res) {
   res.json({ lowStockThreshold: await settingsService.setLowStockThreshold(req.valid.body.value) });
 }
 
+/*
+ * GET /api/admin/products?search=&category=&status=&page=
+ * Receives: req.valid.query = { search?, category?, status?, page }.
+ * Returns: 200 with the standard page object (20 per page, A–Z).
+ */
+async function listProducts(req, res) {
+  res.set('Cache-Control', 'no-store');
+  res.json(await adminProductService.listProducts(req.valid.query));
+}
+
+/*
+ * GET /api/admin/products/:id
+ * Receives: req.valid.params.id.
+ * Returns: 200 { product } (admin detail, inactive products too), or 404.
+ */
+async function getProduct(req, res) {
+  res.set('Cache-Control', 'no-store');
+  res.json({ product: await adminProductService.getProduct(req.valid.params.id) });
+}
+
+/*
+ * POST /api/admin/products
+ * Receives: req.valid.body (name, description, categoryId, priceGhs, stock,
+ *           isActive, image) and req.user (the admin).
+ * Returns: 201 { product }.
+ */
+async function createProduct(req, res) {
+  res.status(201).json({ product: await adminProductService.createProduct(req.valid.body, req.user.id) });
+}
+
+/*
+ * PATCH /api/admin/products/:id
+ * Receives: req.valid.params.id and req.valid.body (any editable fields;
+ *           expectedStock when stock is sent), and req.user.
+ * Returns: 200 { product }.
+ */
+async function updateProduct(req, res) {
+  res.json({ product: await adminProductService.updateProduct(req.valid.params.id, req.valid.body, req.user.id) });
+}
+
 module.exports = {
+  listProducts,
+  getProduct,
+  createProduct,
+  updateProduct,
   getDashboard,
   updateLowStockThreshold,
   listOrders,

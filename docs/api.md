@@ -103,6 +103,7 @@ Every error response has this shape:
 - `message` is safe to show to the user.
 - `fields` appears **only** for validation errors. It maps each field name to a message, so the frontend can show errors next to form inputs.
 - `reason` appears only where an endpoint documents it (currently the 402 errors of `POST /api/checkout/verify`). It's a short machine-readable detail, so the frontend doesn't have to read the message text.
+- `currentStock` appears only on the stock-conflict 409 of `PATCH /api/admin/products/:id`.
 
 | Code | Usual HTTP status | Meaning |
 |---|---|---|
@@ -1475,6 +1476,178 @@ The current value is always shown in the dashboard as `stock.lowStockThreshold`.
 | 400 | `INVALID_REQUEST` | `fields.value`: `"The threshold must be from 0 to 1,000."`, `"…a whole number."` or `"…a number."` |
 | 401 | `UNAUTHENTICATED` | Not logged in |
 | 403 | `FORBIDDEN` | Not an admin, or the `X-Requested-With` header is missing |
+
+#### `GET /api/admin/products`
+
+All products, **including inactive ones**, for the admin's product screen. **A–Z by name, 20 per page.**
+
+- **Login required:** yes
+- **Admin required:** yes
+- **Query** (all optional, and they can be combined; blank values are ignored):
+
+| Parameter | Rules |
+|---|---|
+| `search` | Part of the product name, ignoring case (e.g. `gloss` finds "Pink Lip Gloss"). Up to 100 characters. `%` and `_` are matched literally |
+| `category` | A category **slug** (e.g. `bags`). An unknown slug gives 400 with `fields.category` |
+| `status` | `active` or `inactive` |
+| `page` | Default 1 |
+
+**Example:** `GET /api/admin/products?search=bag&status=active&page=1`
+
+**200 OK** (the standard pagination format)
+
+```json
+{
+  "items": [
+    {
+      "id": 1,
+      "name": "Black Canvas Tote Bag",
+      "category": { "id": 1, "name": "Bags", "slug": "bags" },
+      "priceGhs": 12000,
+      "stock": 15,
+      "isActive": true,
+      "mainImage": { "url": "https://ik.imagekit.io/ADORN/ADORN/Products/Bags/black-tote-bag-1.jpg", "altText": "Black canvas tote bag hanging on a wooden chair" },
+      "updatedAt": "2026-10-07T09:12:00.000Z"
+    }
+  ],
+  "page": 1, "pageSize": 20, "totalItems": 1, "totalPages": 1
+}
+```
+
+- `priceGhs` is pesewas: divide by 100 to show it (12000 → GH₵ 120.00).
+- `mainImage` can be `null` if a product has no photo.
+- For the category drop-down, use the public `GET /api/categories`.
+
+**Errors**
+
+| Status | Code | When |
+|---|---|---|
+| 400 | `INVALID_REQUEST` | `fields.category` (`"Unknown category."`, or a badly formed slug), `fields.status` (`"Status must be active or inactive."`), `fields.search` (too long) or a bad `page` |
+| 401 | `UNAUTHENTICATED` | Not logged in |
+| 403 | `FORBIDDEN` | Not an admin |
+
+#### `GET /api/admin/products/:id`
+
+One product with everything the edit form needs. **Inactive products are returned too**, so the admin can see and reactivate them; in the shop they're 404.
+
+- **Login required:** yes
+- **Admin required:** yes
+
+**200 OK**
+
+```json
+{
+  "product": {
+    "id": 1,
+    "name": "Black Canvas Tote Bag",
+    "category": { "id": 1, "name": "Bags", "slug": "bags" },
+    "priceGhs": 12000,
+    "stock": 15,
+    "isActive": true,
+    "mainImage": { "url": "https://ik.imagekit.io/ADORN/ADORN/Products/Bags/black-tote-bag-1.jpg", "altText": "Black canvas tote bag hanging on a wooden chair" },
+    "updatedAt": "2026-10-07T09:12:00.000Z",
+    "description": "A roomy black canvas tote with long shoulder handles. Light, sturdy and easy to fold, it's made for everyday errands, books and beach days.",
+    "createdAt": "2026-10-04T11:02:00.000Z",
+    "images": [
+      { "id": 1, "url": "https://ik.imagekit.io/ADORN/ADORN/Products/Bags/black-tote-bag-1.jpg", "altText": "Black canvas tote bag hanging on a wooden chair", "sortOrder": 1, "isMain": true }
+    ]
+  }
+}
+```
+
+**Keep `stock`:** send it back as `expectedStock` when you change the stock (see `PATCH` below).
+
+**Errors:** 400 (a bad `id`), 401, 403, **404** `NOT_FOUND` `"Product not found."`
+
+#### `POST /api/admin/products`
+
+Adds a product with one main photo. It's **in the shop straight away** if `isActive` is `true`, the default.
+
+- **Login required:** yes
+- **Admin required:** yes
+- **Headers:** `X-Requested-With: XMLHttpRequest`, `Content-Type: application/json`
+
+**Request body**
+
+| Field | Type | Rules |
+|---|---|---|
+| `name` | string | Required, 2–150 characters (trimmed). **Must be unique, ignoring case** |
+| `description` | string | Required, 1–2,000 characters (trimmed) |
+| `categoryId` | number | Required: an existing category's `id` (from `GET /api/categories`) |
+| `priceGhs` | number | Required, **pesewas**, a whole number from 1 to 100,000,000 (GH₵ 1,000,000). For GH₵ 95.00, send `9500` |
+| `stock` | number | Required, a whole number from 0 to 100,000 |
+| `isActive` | boolean | Optional, default `true` |
+| `image` | object | **Required:** `{ "url", "altText" }`. `url` must start with `https://ik.imagekit.io/` (up to 500 characters); a `?updatedAt=…` part, added when copying a link from ImageKit, is removed automatically. `altText` describes the photo, 1–200 characters |
+
+Numbers must be **JSON numbers** (`9500`, not `"9500"`). Any other field (e.g. `id`) is ignored.
+
+```json
+{
+  "name": "Rose Gold Hoop Earrings",
+  "description": "Light rose-gold hoops for every day.",
+  "categoryId": 4,
+  "priceGhs": 9500,
+  "stock": 12,
+  "isActive": true,
+  "image": { "url": "https://ik.imagekit.io/ADORN/ADORN/Products/Jewellery/rose-gold-hoops-1.jpg", "altText": "Pair of rose-gold hoop earrings" }
+}
+```
+
+**201 Created:** `{ "product": { … } }`, in the same shape as `GET /api/admin/products/:id`.
+
+**Errors**
+
+| Status | Code | Message / when |
+|---|---|---|
+| 400 | `INVALID_REQUEST` | Validation failed; see `fields`. For example `fields.name` "The name must be 2–150 characters.", `fields.priceGhs` "Enter a price greater than 0.", `fields.stock` "Enter a whole number from 0 to 100,000.", `fields.categoryId` "Choose a category." (also for a category that doesn't exist), `fields["image.url"]` "Use an image address from the store's ImageKit.", `fields["image.altText"]` "Describe the photo (up to 200 characters).", `fields.image` when the image is missing |
+| 401 | `UNAUTHENTICATED` | Not logged in |
+| 403 | `FORBIDDEN` | Not an admin, or the `X-Requested-With` header is missing |
+| 409 | `CONFLICT` | `"A product with this name already exists."` (ignoring case: "pink lip gloss" = "Pink Lip Gloss") |
+
+#### `PATCH /api/admin/products/:id`
+
+Edits a product. Send **only the fields that change**, at least one of: `name`, `description`, `categoryId`, `priceGhs`, `stock`, `isActive`, `image` (same rules as `POST`).
+
+- **Login required:** yes
+- **Admin required:** yes
+- **Headers:** `X-Requested-With: XMLHttpRequest`, `Content-Type: application/json`
+
+**There's no delete.** Old orders point at products, so to remove a product from the shop, **deactivate** it: `{ "isActive": false }`. It's then hidden from the shop and search, any cart lines with it show as unavailable, and checkout refuses it. Its reviews are kept. `{ "isActive": true }` brings it back.
+
+**Changing the stock needs `expectedStock`:** the `stock` value you were shown when you opened the product. If a sale or cancellation changed the stock meanwhile, the server refuses (409) instead of silently overwriting it:
+
+```json
+{ "stock": 25, "expectedStock": 15 }
+```
+
+`image` replaces the product's **main** photo:
+
+```json
+{ "image": { "url": "https://ik.imagekit.io/ADORN/ADORN/Products/Bags/black-tote-bag-2.jpg", "altText": "Black canvas tote bag, side view" } }
+```
+
+**200 OK:** `{ "product": { … } }` with the updated product (the same shape as `GET`).
+
+**What a change affects:**
+- **Price:** only **new** carts and checkouts. Past orders keep the prices that were paid, and checkouts already started keep their amounts.
+- **Stock:** the shop's "In stock / Only X left" labels and the dashboard's low-stock lists update straight away.
+
+**Errors**
+
+| Status | Code | Message / when |
+|---|---|---|
+| 400 | `INVALID_REQUEST` | Any validation error from `POST`; `fields._` "Send at least one field to change."; `fields.expectedStock` when `stock` is sent without it |
+| 401 | `UNAUTHENTICATED` | Not logged in |
+| 403 | `FORBIDDEN` | Not an admin, or the `X-Requested-With` header is missing |
+| 404 | `NOT_FOUND` | `"Product not found."` |
+| 409 | `CONFLICT` | `"A product with this name already exists."` |
+| 409 | `CONFLICT` | **The stock changed since you opened the product.** Nothing was saved, including any other fields in the same request. The error includes the current stock: |
+
+```json
+{ "error": { "code": "CONFLICT", "message": "Stock changed since you opened this product (it's now 14). Check the number and save again.", "currentStock": 14 } }
+```
+
+Show the message, put `currentStock` into the stock field, and let the admin check and save again.
 
 #### `GET /api/admin/orders`
 

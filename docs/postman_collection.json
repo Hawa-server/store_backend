@@ -849,6 +849,248 @@
       "description": "Log in as the admin (ADMIN_EMAIL / ADMIN_PASSWORD from .env) first. Change the email and password variables, or edit the Log in body.",
       "item": [
         {
+          "name": "All products (admin)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/products?search=&category=&status=&page=1",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "products"
+              ],
+              "query": [
+                {
+                  "key": "search",
+                  "value": ""
+                },
+                {
+                  "key": "category",
+                  "value": ""
+                },
+                {
+                  "key": "status",
+                  "value": ""
+                },
+                {
+                  "key": "page",
+                  "value": "1"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Product details (admin)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/products/{{productId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "products",
+                "{{productId}}"
+              ]
+            },
+            "description": "Note stock: send it as expectedStock when changing the stock."
+          }
+        },
+        {
+          "name": "Add product",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Requested-With",
+                "value": "XMLHttpRequest"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/products",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "products"
+              ]
+            },
+            "description": "Use a real ImageKit address. The name must be unique.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Rose Gold Hoop Earrings\",\n  \"description\": \"Light rose-gold hoops for every day.\",\n  \"categoryId\": 4,\n  \"priceGhs\": 9500,\n  \"stock\": 12,\n  \"isActive\": true,\n  \"image\": {\n    \"url\": \"https://ik.imagekit.io/ADORN/ADORN/Products/Jewellery/gold-hoop-earrings-1.jpg\",\n    \"altText\": \"Pair of hoop earrings\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Edit product (price)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Requested-With",
+                "value": "XMLHttpRequest"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/products/{{productId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "products",
+                "{{productId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"priceGhs\": 13000\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Edit product (stock)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Requested-With",
+                "value": "XMLHttpRequest"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/products/{{productId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "products",
+                "{{productId}}"
+              ]
+            },
+            "description": "expectedStock = the stock shown by Product details. A different value gives 409 with currentStock.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"stock\": 25,\n  \"expectedStock\": 15\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Deactivate product",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Requested-With",
+                "value": "XMLHttpRequest"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/products/{{productId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "products",
+                "{{productId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"isActive\": false\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Reactivate product",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Requested-With",
+                "value": "XMLHttpRequest"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/products/{{productId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "products",
+                "{{productId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"isActive\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
           "name": "Dashboard",
           "request": {
             "method": "GET",

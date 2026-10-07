@@ -125,6 +125,12 @@ The demo orders were never paid through Paystack, so trying to **refund** one is
 
 ---
 
+### Managing products (admin)
+
+The admin can list, add and edit products through the API (`/api/admin/products`, see [docs/api.md](docs/api.md)): name, description, category, price, stock, the main photo (an ImageKit address), and whether it's on sale. Products are never deleted, only **deactivated** (`isActive: false`), because past orders refer to them.
+
+**These are live database changes.** `docs/catalogue.md` is only what the **seeders** use to build a new database. If the database is rebuilt from the seeders, it gets the catalogue again, and products added or changed through the admin are not kept. So after products have been edited in production, don't re-seed it, or update `docs/catalogue.md` to match first.
+
 ## Testing
 
 ### Postman
