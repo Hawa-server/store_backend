@@ -9,7 +9,8 @@ module.exports = (sequelize, DataTypes) => {
     'Product',
     {
       categoryId: { type: DataTypes.INTEGER, allowNull: false },
-      name: { type: DataTypes.STRING(150), allowNull: false },
+      // Unique (BE23 migration): the catalogue, the seeders and admins identify products by name.
+      name: { type: DataTypes.STRING(150), allowNull: false, unique: 'products_name_unique' },
       description: { type: DataTypes.TEXT, allowNull: false },
       priceGhs: { type: DataTypes.INTEGER.UNSIGNED, allowNull: false, validate: { isInt: true, min: 0 } },
       stock: { type: DataTypes.INTEGER.UNSIGNED, allowNull: false, defaultValue: 0, validate: { isInt: true, min: 0 } },

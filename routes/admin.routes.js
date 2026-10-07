@@ -13,6 +13,8 @@ const validate = require('../middleware/validate');
 const { adminOrdersQuery, orderIdParams, statusChangeBody } = require('../validators/order.validators');
 const { issueRefundBody, refundParams } = require('../validators/refund.validators');
 const { dashboardQuery, thresholdBody } = require('../validators/admin.validators');
+const { adminProductsQuery, createProductBody, updateProductBody } = require('../validators/adminProduct.validators');
+const { productIdParams } = require('../validators/catalog.validators');
 const {
   adminReviewsQuery, moderationReasonBody, unhideBody, reviewIdParams,
 } = require('../validators/review.validators');
@@ -23,6 +25,12 @@ router.use(requireAuth, requireAdmin);
 // Dashboard and settings (BE20)
 router.get('/dashboard', validate({ query: dashboardQuery }), controller.getDashboard);
 router.patch('/settings/low-stock-threshold', validate({ body: thresholdBody }), controller.updateLowStockThreshold);
+
+// Products (BE23): list, view, add, edit. No delete: products are deactivated.
+router.get('/products', validate({ query: adminProductsQuery }), controller.listProducts);
+router.get('/products/:id', validate({ params: productIdParams }), controller.getProduct);
+router.post('/products', validate({ body: createProductBody }), controller.createProduct);
+router.patch('/products/:id', validate({ params: productIdParams, body: updateProductBody }), controller.updateProduct);
 
 router.get('/orders', validate({ query: adminOrdersQuery }), controller.listOrders);
 router.get('/orders/:id', validate({ params: orderIdParams }), controller.getOrder);
