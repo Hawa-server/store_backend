@@ -1660,3 +1660,11 @@ PATCH /api/admin/products/1   { "stock": 25, "expectedStock": 15 }
 - **Safe search.** `LIKE '%…%'` treats `%` and `_` as wildcards, so they're escaped: searching for "%" finds names containing "%", not everything.
 - **Logging what, not the data.** Each change logs who (admin id), which product, and the **names** of the changed fields, never the values or the request body.
 - **Live changes vs seeding.** `docs/catalogue.md` is still what the **seeders** use. Admin changes are live database changes; re-running the seeders on an empty database rebuilds the catalogue, without the admin's changes.
+
+### The frontend on Vercel, and `TRUST_PROXY_HOPS=2`
+
+The frontend is deployed on Vercel, and its `vercel.json` rewrites `/api/*` to the Render API, so the browser only ever talks to the Vercel site (first-party cookies). Each shopper's request now passes **two proxies** before Express: Vercel, then Render's load balancer.
+
+Rate limits are counted per IP, so Express must find the shopper's real IP. Vercel's docs say it **overwrites** `X-Forwarded-For` with the client's public IP, ignoring anything the browser sent. Render's proxy then **appends** the address it received the request from (Vercel's). So the header arrives as `"<shopper IP>, <Vercel IP>"`. `app.set('trust proxy', 2)` tells Express to trust exactly those two hops, and `req.ip` becomes the shopper's IP. With `1`, it would be Vercel's IP for everyone, and every shopper would share one login limit.
+
+Trusting more hops than really exist is a risk: an extra hop means trusting a value the client can write. That's why the setting is a number per deployment, not "trust everything". Requests that skip Vercel and call `onrender.com` directly can still set their own header (a known limit, noted in the README).

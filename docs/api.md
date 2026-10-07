@@ -15,7 +15,7 @@ This document is the contract between the backend and the React frontend. Every 
 
 All endpoint paths start with `/api`.
 
-**Recommended in production: call the API through your frontend's own domain.** The frontend and the API will be on different sites (for example `…vercel.app` and `…onrender.com`). The login and cart cookies are then "third-party" cookies (`Secure; SameSite=None`), which **Safari and some privacy settings block**, so logins would silently not stick. The simple fix is to let the frontend host forward `/api/*` to the Render address (a "rewrite" on Vercel, a "redirect/proxy" on Netlify, or the Vite dev server `proxy` locally), and call the API with relative URLs such as `fetch('/api/products')`. The cookies then belong to the frontend's own domain and work everywhere.
+**Recommended in production: call the API through your frontend's own domain.** The frontend and the API will be on different sites (for example `…vercel.app` and `…onrender.com`). The login and cart cookies are then "third-party" cookies (`Secure; SameSite=None`), which **Safari and some privacy settings block**, so logins would silently not stick. The fix, used by the deployed frontend: Vercel's `vercel.json` **rewrites** `/api/*` to the Render address (locally, the Vite dev server `proxy` does the same), and the frontend calls the API with relative URLs such as `fetch('/api/products')`. The cookies then belong to the frontend's own domain and work everywhere. (The backend is configured for this with `TRUST_PROXY_HOPS=2`; see the README.)
 
 ### Requests from the browser
 

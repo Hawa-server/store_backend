@@ -93,7 +93,7 @@ npx sequelize-cli db:seed:undo:all      # remove all seeded data
 | `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD` | The MySQL connection. Locally, `127.0.0.1` is more reliable than `localhost` |
 | `DB_SSL` | `false` locally; `true` for Aiven |
 | `DB_CA_CERT` | Aiven's CA certificate (the whole text). Only used when `DB_SSL=true`. Line breaks may be written as `\n` |
-| `TRUST_PROXY_HOPS` | How many proxies sit in front of the API: `1` = Render only; `2` = the frontend host also forwards `/api` (see "Frontend and cookies" below). Needed so rate limits see each visitor's real IP |
+| `TRUST_PROXY_HOPS` | How many proxies sit in front of the API, so rate limits see each shopper's real IP. **Production: `2`** (Vercel's rewrite + Render's proxy, see "Frontend on Vercel" below). `1` = Render only. Leave it out locally (it defaults to 1) |
 | `CLIENT_URL` | The frontend's address (the only origin CORS allows). It's also used in email links |
 | `JWT_SECRET` | A long random secret for login tokens. Generate one with `node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"`. Use a **different** one in production |
 | `JWT_EXPIRES_IN` | How long a login lasts (`1d`) |
@@ -195,8 +195,8 @@ Commit and push the project. Check first that `.env` is **not** included: `git s
    - `NODE_ENV=production`, `DB_SSL=true`, and `DB_CA_CERT` = the whole certificate text;
    - the Aiven `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER` and `DB_PASSWORD`;
    - a **new** `JWT_SECRET`, and a strong `ADMIN_PASSWORD`;
-   - `CLIENT_URL` = the frontend's address (a placeholder until the frontend is deployed);
-   - `TRUST_PROXY_HOPS=1`, or `2` if the frontend forwards `/api`;
+   - `CLIENT_URL` = the frontend's **Vercel** address, e.g. `https://<your-app>.vercel.app` (no slash at the end). It's used for CORS, the Paystack return page and the links in emails;
+   - `TRUST_PROXY_HOPS=2` (shoppers reach the API through Vercel, then Render);
    - the Paystack test key, the Ethereal SMTP details, the store contact details and `LOGIN_CODE_ENABLED`.
 
    Don't set `PORT`; Render provides it.
@@ -226,8 +226,24 @@ https://<your-render-service>.onrender.com/api/webhooks/paystack
 
 **Render free plan:** the service sleeps after about 15 minutes without traffic, and the first request then takes up to a minute. Paystack retries webhooks that fail, and the verify endpoint is safe to call again, so no payment is lost.
 
-### Frontend and cookies
-In production the frontend and the API are on **different sites**, so the login and cart cookies are "third-party" cookies, which **Safari and some privacy settings block**. Recommended: let the frontend host forward `/api/*` to the Render address (a rewrite on Vercel, or a proxy/redirect on Netlify), and set `TRUST_PROXY_HOPS=2`. The cookies then belong to the frontend's own domain. Details are in [docs/api.md](docs/api.md) ("Base URL").
+### 7. Frontend on Vercel
+The React frontend is deployed on **Vercel**. Its `vercel.json` **rewrites** every `/api/*` request to the Render API, so the browser only ever talks to the Vercel address:
+
+```text
+shopper's browser ──► https://<your-app>.vercel.app/api/products
+                          │  Vercel rewrite (server-side, invisible to the browser)
+                          ▼
+                     https://<your-render-service>.onrender.com/api/products ──► Express
+```
+
+Why this matters:
+- **Cookies are first-party.** The login and cart cookies belong to the Vercel domain, so they work in every browser. Safari and some privacy settings block cookies from a *different* site, which is what happens if the frontend calls `onrender.com` directly.
+- **Rate limits need `TRUST_PROXY_HOPS=2` on Render.** Each request passes through **two** proxies: Vercel, then Render's own. Vercel puts the shopper's real IP in the `X-Forwarded-For` header. It overwrites any value the browser sends, so it can't be faked through Vercel (see [Vercel's request headers docs](https://vercel.com/docs/headers/request-headers)). Render then adds Vercel's IP. With `2`, Express reads the shopper's IP; with `1`, every shopper would appear as Vercel and share **one** limit (for example 10 logins per 15 minutes for the whole shop).
+- **Set `CLIENT_URL`** on Render to the Vercel address, so CORS accepts the frontend, Paystack returns shoppers to `/checkout/complete` on Vercel, and email links open the Vercel site.
+
+After changing `TRUST_PROXY_HOPS` or `CLIENT_URL` on Render, save; Render redeploys.
+
+**Known limit:** the Render address is still public, and with `2` trusted hops, someone who calls `onrender.com` **directly** (not through Vercel) could send their own `X-Forwarded-For` header and choose the IP the rate limiter sees. Shoppers always come through Vercel, so this only matters for deliberate abuse. Blocking direct access would need a secret header added by the proxy, which is beyond this project. Paystack's webhooks call Render directly and aren't affected: the webhook isn't rate-limited, and it's protected by its signature instead.
 
 ---
 
