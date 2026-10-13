@@ -35,7 +35,8 @@ async function listMine(req, res) {
 
 /*
  * GET /api/orders/:id
- * Receives: req.user and req.valid.params.id.
+ * Receives: req.user and req.valid.params.id: the order's public UUID (BE26),
+ *           or null if the address didn't hold a UUID (then it's a 404).
  * Returns: 200 { order } with details, history and refunds; or 404 if the
  *          order doesn't exist or isn't this user's (the same answer, so
  *          other people's order ids can't be discovered).
@@ -57,8 +58,11 @@ async function getMine(req, res) {
  * Errors: 404 if it isn't this shopper's order; 409 if it has already shipped.
  */
 async function cancelMine(req, res) {
+  // UUID → the internal id, only if it's THIS shopper's order (BE26).
+  const orderId = await orderService.findOrderId(req.valid.params.id, req.user.id);
+  if (!orderId) throw new AppError(404, 'NOT_FOUND', 'Order not found.');
   const { alreadyCancelled } = await cancellationService.cancelOrder({
-    orderId: req.valid.params.id,
+    orderId,
     actorUserId: req.user.id,
     ownerId: req.user.id, // the shopper can only cancel their OWN order
   });

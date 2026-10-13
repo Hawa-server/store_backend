@@ -35,7 +35,7 @@ Build a secure, production-oriented REST API for an online fashion and beauty st
 - Refresh tokens (see Section 5).
 - Product variants (sizes and shades).
 - Thresholds per product and emailed stock alerts.
-- Linking guest orders to accounts created later, and guest cancellation.
+- Guest cancellation. (Linking guest orders to accounts created later was added afterwards as the extra task BE25: see docs/BE25-link-guest-orders.md.)
 - Any frontend code (the frontend is a separate project).
 
 ## User stories covered

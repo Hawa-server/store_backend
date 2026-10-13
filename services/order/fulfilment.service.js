@@ -98,6 +98,12 @@ async function fulfilCheckout(checkoutId) {
           name: checkout.name,
           phone: checkout.phone,
           address: checkout.address,
+          // Where it goes and the fee charged, exactly as saved at checkout
+          // (BE24), even if an admin has changed or hidden the area since.
+          deliveryRegionId: checkout.deliveryRegionId,
+          deliveryTownId: checkout.deliveryTownId,
+          deliveryRegionName: checkout.deliveryRegionName,
+          deliveryTownName: checkout.deliveryTownName,
           subtotal: checkout.subtotal,
           deliveryFee: checkout.deliveryFee,
           total: checkout.total,

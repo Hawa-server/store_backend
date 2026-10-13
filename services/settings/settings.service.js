@@ -5,7 +5,9 @@
  * Settings are stored as text (key/value), so this service turns each one into
  * the right type and checks it's valid before anyone uses it.
  *
- *   deliveryFee        whole pesewas (e.g. 2000 = GHS 20.00)   used by checkout (BE7)
+ *   deliveryFee        whole pesewas (e.g. 2000 = GHS 20.00)   NO LONGER USED by
+ *                      checkout: since BE24 the fee depends on the delivery
+ *                      area (services/delivery). Kept in the table for old seeds.
  *   usdRate            GHS per 1 USD, display only             used by BE13 (currency)
  *   lowStockThreshold  whole number                            used by BE20
  */
@@ -28,7 +30,8 @@ async function getSetting(key) {
 /*
  * getDeliveryFee()
  * Receives: nothing.
- * Returns: the flat delivery fee in whole pesewas (an integer, never a decimal).
+ * Returns: the old flat delivery fee in whole pesewas (an integer, never a decimal).
+ * Not used by checkout any more (BE24 fees come from the delivery areas).
  */
 async function getDeliveryFee() {
   const value = Number(await getSetting('deliveryFee'));

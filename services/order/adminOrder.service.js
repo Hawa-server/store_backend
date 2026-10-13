@@ -67,7 +67,7 @@ async function listOrders({ status, from, to, page }) {
 
   const { count, rows } = await Order.findAndCountAll({
     where,
-    attributes: ['id', 'orderNumber', 'createdAt', 'userId', 'name', 'email', 'total', 'status'],
+    attributes: ['id', 'publicId', 'orderNumber', 'createdAt', 'userId', 'name', 'email', 'total', 'status'],
     order: [['createdAt', 'DESC'], ['id', 'DESC']],
     ...toLimitOffset(page, ADMIN_PAGE_SIZE),
   });
@@ -76,7 +76,7 @@ async function listOrders({ status, from, to, page }) {
   const items = rows.map((order) => {
     const refundedGhs = refunded.get(order.id) || 0;
     return {
-      id: order.id,
+      id: order.publicId, // the UUID (BE26); order.id stays internal
       orderNumber: order.orderNumber,
       placedAt: order.createdAt,
       customer: { name: order.name, email: order.email, userId: order.userId, isGuest: order.userId === null },
@@ -106,12 +106,18 @@ async function getOrder(orderId) {
     .reduce((sum, refund) => sum + refund.amount, 0);
 
   return {
-    id: order.id,
+    id: order.publicId, // the UUID (BE26); order.id stays internal
     orderNumber: order.orderNumber,
     placedAt: order.createdAt,
     status: order.status,
     customer: { name: order.name, email: order.email, phone: order.phone, userId: order.userId, isGuest: order.userId === null },
+    // Set when the order was placed as a guest and later linked to this
+    // account (BE25): "Placed as a guest, linked to this account on …".
+    linkedAt: order.linkedAt,
     deliveryAddress: order.address,
+    // Copies saved at checkout (BE24); null on orders from before BE24.
+    deliveryRegionName: order.deliveryRegionName,
+    deliveryTownName: order.deliveryTownName,
     items: order.items.map(toItemView),
     subtotalGhs: order.subtotal,
     deliveryFeeGhs: order.deliveryFee,

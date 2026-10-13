@@ -114,7 +114,7 @@ async function getDashboard(periodName) {
     Refund.sum('amount', { where: { ...created, status: COUNTED_REFUND_STATUSES } }),
     Refund.count({ where: { status: 'failed' } }),
     Order.findAll({
-      attributes: ['id', 'orderNumber', 'createdAt', 'name', 'total', 'status'],
+      attributes: ['id', 'publicId', 'orderNumber', 'createdAt', 'name', 'total', 'status'],
       order: [['createdAt', 'DESC'], ['id', 'DESC']],
       limit: 5,
     }),
@@ -128,7 +128,7 @@ async function getDashboard(periodName) {
     sales,
     refunds: { refundedInPeriodGhs: Number(refundedInPeriod) || 0, failedRefunds },
     recentOrders: recent.map((o) => ({
-      id: o.id,
+      id: o.publicId, // the UUID (BE26), for the link to the order
       orderNumber: o.orderNumber,
       placedAt: o.createdAt,
       customerName: o.name,

@@ -31,6 +31,7 @@ const ordersRoutes = require('./routes/orders.routes');
 const settingsRoutes = require('./routes/settings.routes');
 const adminRoutes = require('./routes/admin.routes');
 const reviewsRoutes = require('./routes/reviews.routes');
+const deliveryRoutes = require('./routes/delivery.routes');
 
 const app = express();
 
@@ -80,6 +81,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/categories', categoriesRoutes);
 app.use('/api/products', productsRoutes);
 app.use('/api/cart', cartRoutes);
+app.use('/api/delivery-areas', deliveryRoutes);
 app.use('/api/checkout', checkoutRoutes);
 app.use('/api/orders', ordersRoutes);
 app.use('/api/settings', settingsRoutes);

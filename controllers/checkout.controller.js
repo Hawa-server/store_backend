@@ -23,7 +23,8 @@ const FAILED_MESSAGES = {
 
 /*
  * POST /api/checkout
- * Receives: req.valid.body = { name, email, phone, address }, plus req.user
+ * Receives: req.valid.body = { name, email, phone, address, deliveryRegionId,
+ *           deliveryTownId? }, plus req.user
  *           (or null) and the guest cart cookie.
  * Returns: 201 { checkout } with the Paystack reference, access code,
  *          payment page URL and the server-calculated amounts.
@@ -61,6 +62,7 @@ async function verifyPayment(req, res) {
       const { order } = result;
       return res.json({
         order: {
+          id: order.publicId, // the UUID (BE26), never the counting number
           orderNumber: order.orderNumber,
           confirmationToken: order.confirmationToken,
           status: order.status,

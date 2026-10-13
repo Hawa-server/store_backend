@@ -38,8 +38,17 @@ const EMPTY_CART_VIEW = { items: [], itemCount: 0, subtotalGhs: 0, subtotalUsd: 
  *          the shopper uses the cart. An older guest cart is treated as expired.
  */
 function guestCartWhere(guestToken) {
-  const cutoff = new Date(Date.now() - GUEST_CART_DAYS * 24 * 60 * 60 * 1000);
-  return { guestToken, userId: null, updatedAt: { [Op.gt]: cutoff } };
+  return { guestToken, userId: null, updatedAt: { [Op.gt]: guestCartCutoff() } };
+}
+
+/*
+ * guestCartCutoff()
+ * Receives: nothing.
+ * Returns: the Date before which an unused guest cart counts as expired
+ *          (30 days ago). Also used by guest linking (BE25).
+ */
+function guestCartCutoff() {
+  return new Date(Date.now() - GUEST_CART_DAYS * 24 * 60 * 60 * 1000);
 }
 
 /*
@@ -310,19 +319,99 @@ async function touchCart(cart, transaction) {
 }
 
 /*
+ * mergeCartsIntoAccount(guestCarts, userId, transaction)
+ * The shared merge step, used by the login merge below (BE6) and by guest
+ * linking after verification (BE25, services/account/guestLink.service.js).
+ * Receives: guest Carts the CALLER has already locked (in id order), the
+ *           account's user id, and the open transaction.
+ * Returns: { added, reduced }:
+ *   added   = guest lines moved into, or combined with, the account cart;
+ *   reduced = lines that couldn't move in full: the quantity was capped by
+ *             stock (or 99), or the line was dropped because the product was
+ *             switched off or has sold out.
+ * The guest carts are deleted at the end (their lines go with them).
+ *
+ * Rules: quantities of the same product are added together, then capped at
+ * the current stock (and at 99). Products that were switched off or have sold
+ * out are dropped, because they couldn't be bought anyway.
+ */
+async function mergeCartsIntoAccount(guestCarts, userId, transaction) {
+  const lock = transaction.LOCK.UPDATE;
+  if (!guestCarts.length) return { added: 0, reduced: 0 };
+
+  // Lock order: guest carts (already locked by the caller) → account cart →
+  // products. Every cart merge takes locks in this order, so two at once
+  // queue up instead of deadlocking.
+  let accountCart = await Cart.findOne({ where: { userId }, lock, transaction });
+  if (!accountCart) accountCart = await Cart.create({ userId }, { transaction });
+
+  const guestItems = await CartItem.findAll({
+    where: { cartId: guestCarts.map((cart) => cart.id) },
+    order: [['id', 'ASC']],
+    transaction,
+  });
+  const productIds = [...new Set(guestItems.map((item) => item.productId))];
+
+  // Lock the products too, so the stock we cap against can't change mid-merge.
+  // Sorted by id so every transaction locks products in the same order.
+  const products = await Product.findAll({
+    where: { id: productIds },
+    order: [['id', 'ASC']],
+    lock,
+    transaction,
+  });
+  const productById = new Map(products.map((p) => [p.id, p]));
+
+  const accountItems = await CartItem.findAll({
+    where: { cartId: accountCart.id, productId: productIds },
+    transaction,
+  });
+  const accountItemByProduct = new Map(accountItems.map((item) => [item.productId, item]));
+
+  let added = 0;
+  let reduced = 0;
+  for (const guestItem of guestItems) {
+    const product = productById.get(guestItem.productId);
+    // Can't be bought any more: leave it out rather than carry a dead line over.
+    if (!product || !product.isActive || product.stock === 0) {
+      reduced += 1;
+      continue;
+    }
+
+    const existing = accountItemByProduct.get(guestItem.productId);
+    const wanted = (existing ? existing.quantity : 0) + guestItem.quantity;
+    // Add the two quantities, then cap: never more than is in stock, never over 99.
+    const quantity = Math.min(wanted, product.stock, MAX_LINE_QUANTITY);
+    if (quantity < wanted) reduced += 1;
+
+    if (existing) {
+      await existing.update({ quantity }, { transaction });
+    } else {
+      // Remember the new line, in case a second guest cart has the same product.
+      accountItemByProduct.set(
+        guestItem.productId,
+        await CartItem.create({ cartId: accountCart.id, productId: guestItem.productId, quantity }, { transaction })
+      );
+    }
+    added += 1;
+  }
+
+  // The guest carts' lines are deleted with them (ON DELETE CASCADE).
+  for (const guestCart of guestCarts) await guestCart.destroy({ transaction });
+  await touchCart(accountCart, transaction);
+  return { added, reduced };
+}
+
+/*
  * mergeGuestCart(userId, guestToken)
  * Called once per login (from authService.completeLogin), so a shopper keeps
- * what they added before logging in.
+ * what they added before logging in, in THIS browser.
  * Receives: the id of the user who just logged in, and the guest cookie token
  *           (or null).
  * Returns: { merged }: how many guest lines were moved into or combined with
  *          the account cart (0 if there was no live guest cart).
  * Throws: if the database work fails. Everything is then rolled back, so the
  *         guest cart is left exactly as it was and can be merged next time.
- *
- * Rules: quantities of the same product are added together, then capped at
- * the current stock (and at 99). Products that were switched off or have sold
- * out are dropped, because they couldn't be bought anyway.
  */
 async function mergeGuestCart(userId, guestToken) {
   if (!guestToken) return { merged: 0 };
@@ -332,60 +421,14 @@ async function mergeGuestCart(userId, guestToken) {
   // the complete transaction is run once more.
   return withDeadlockRetry(() =>
     sequelize.transaction(async (transaction) => {
-      const lock = transaction.LOCK.UPDATE;
-
-      // Locks are always taken in the same order (guest cart → account cart →
-      // products). Two logins at once with the same cookie then queue up behind
-      // the guest cart lock instead of deadlocking; the second finds the guest
-      // cart already deleted and merges nothing, so nothing is added twice.
-      const guestCart = await Cart.findOne({ where: guestCartWhere(guestToken), lock, transaction });
+      // The guest cart is locked FIRST. Two logins at once with the same
+      // cookie then queue up here; the second finds the guest cart already
+      // deleted and merges nothing, so nothing is added twice.
+      const guestCart = await Cart.findOne({ where: guestCartWhere(guestToken), lock: transaction.LOCK.UPDATE, transaction });
       if (!guestCart) return { merged: 0 };
 
-      let accountCart = await Cart.findOne({ where: { userId }, lock, transaction });
-      if (!accountCart) accountCart = await Cart.create({ userId }, { transaction });
-
-      const guestItems = await CartItem.findAll({ where: { cartId: guestCart.id }, transaction });
-      const productIds = guestItems.map((item) => item.productId);
-
-      // Lock the products too, so the stock we cap against can't change mid-merge.
-      // Sorted by id so every transaction locks products in the same order.
-      const products = await Product.findAll({
-        where: { id: productIds },
-        order: [['id', 'ASC']],
-        lock,
-        transaction,
-      });
-      const productById = new Map(products.map((p) => [p.id, p]));
-
-      const accountItems = await CartItem.findAll({
-        where: { cartId: accountCart.id, productId: productIds },
-        transaction,
-      });
-      const accountItemByProduct = new Map(accountItems.map((item) => [item.productId, item]));
-
-      let merged = 0;
-      for (const guestItem of guestItems) {
-        const product = productById.get(guestItem.productId);
-        // Can't be bought any more: leave it out rather than carry a dead line over.
-        if (!product || !product.isActive || product.stock === 0) continue;
-
-        const existing = accountItemByProduct.get(guestItem.productId);
-        // Add the two quantities, then cap: never more than is in stock, never over 99.
-        const quantity = Math.min(
-          (existing ? existing.quantity : 0) + guestItem.quantity,
-          product.stock,
-          MAX_LINE_QUANTITY
-        );
-
-        if (existing) await existing.update({ quantity }, { transaction });
-        else await CartItem.create({ cartId: accountCart.id, productId: guestItem.productId, quantity }, { transaction });
-        merged += 1;
-      }
-
-      // The guest cart's lines are deleted with it (ON DELETE CASCADE).
-      await guestCart.destroy({ transaction });
-      await touchCart(accountCart, transaction);
-      return { merged };
+      const { added } = await mergeCartsIntoAccount([guestCart], userId, transaction);
+      return { merged: added };
     })
   );
 }
@@ -399,4 +442,7 @@ module.exports = {
   updateItemQuantity,
   removeItem,
   mergeGuestCart,
+  // For guest linking (BE25):
+  mergeCartsIntoAccount,
+  guestCartCutoff,
 };

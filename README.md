@@ -93,7 +93,7 @@ npx sequelize-cli db:seed:undo:all      # remove all seeded data
 | `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD` | The MySQL connection. Locally, `127.0.0.1` is more reliable than `localhost` |
 | `DB_SSL` | `false` locally; `true` for Aiven |
 | `DB_CA_CERT` | Aiven's CA certificate (the whole text). Only used when `DB_SSL=true`. Line breaks may be written as `\n` |
-| `TRUST_PROXY_HOPS` | How many proxies sit in front of the API: `1` = Render only; `2` = the frontend host also forwards `/api` (see "Frontend and cookies" below). Needed so rate limits see each visitor's real IP |
+| `TRUST_PROXY_HOPS` | How many proxies sit in front of the API, so rate limits see each shopper's real IP. **Production: `2`** (Vercel's rewrite + Render's proxy, see "Frontend on Vercel" below). `1` = Render only. Leave it out locally (it defaults to 1) |
 | `CLIENT_URL` | The frontend's address (the only origin CORS allows). It's also used in email links |
 | `JWT_SECRET` | A long random secret for login tokens. Generate one with `node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"`. Use a **different** one in production |
 | `JWT_EXPIRES_IN` | How long a login lasts (`1d`) |
@@ -111,7 +111,8 @@ npx sequelize-cli db:seed:undo:all      # remove all seeded data
 
 The seeders create:
 - **6 categories** and **41 products**, each with a price, stock, description and photo. They're read from **[docs/catalogue.md](docs/catalogue.md)**, the single product list: edit that file and re-seed to change the catalogue. **Makeup Setting Spray** (stock 2) is the low-stock demo product and **Pearl Stud Earrings** (stock 0) the out-of-stock one;
-- the settings: delivery fee GHS 20.00, USD rate 15.50, low-stock threshold 5;
+- the settings: USD rate 15.50, low-stock threshold 5 (and the old flat delivery fee GHS 20.00, no longer used since BE24);
+- **delivery areas** *(BE24)*: Ghana's **16 regions** and **18 towns**, with starting fees from Kumasi, where the store ships from (for example Kumasi GH₵ 10, the rest of Ashanti GH₵ 15, Accra GH₵ 20, Tamale GH₵ 50). **These fees are examples:** the store owner should check them and change them in the admin;
 - **the admin account**, from `ADMIN_EMAIL` and `ADMIN_PASSWORD`;
 - **sample data (DEMO DATA, not real customers):** 3 sample shoppers, each with a Delivered order (numbered `ORD-DEMO-…`) and a few reviews, so product pages and the dashboard aren't empty.
 
@@ -121,7 +122,7 @@ The seeders create:
 | `kwame.boateng@example.com` | `DemoShopper123` |
 | `efua.owusu@example.com` | `DemoShopper123` |
 
-The demo orders were never paid through Paystack, so trying to **refund** one is refused by Paystack. That's handy for seeing the "failed refund → retry" screens.
+The demo orders were never paid through Paystack, so trying to **refund** one is refused by Paystack. That's handy for seeing the "failed refund → retry" screens. They were also placed "before" delivery areas, so they show **"Delivery area: not recorded"** and the old flat GH₵ 20 fee.
 
 ---
 
@@ -131,15 +132,25 @@ The admin can list, add and edit products through the API (`/api/admin/products`
 
 **These are live database changes.** `docs/catalogue.md` is only what the **seeders** use to build a new database. If the database is rebuilt from the seeders, it gets the catalogue again, and products added or changed through the admin are not kept. So after products have been edited in production, don't re-seed it, or update `docs/catalogue.md` to match first.
 
+### Delivery fees (admin)
+
+The delivery fee depends on the region and town the shopper chooses at checkout: **the town's own fee if it has one, otherwise the region's fee**. The admin can change any region or town fee, add towns, and hide or show regions and towns (`/api/admin/delivery-areas`, `/api/admin/delivery-regions/:id`, `/api/admin/delivery-towns`, see [docs/api.md](docs/api.md)). Nothing is deleted, because orders refer to them, and at least one region always stays active.
+
+A fee change only affects **new** checkouts: every order keeps the fee and area it was charged, in its emails and refunds too.
+
+### Guest orders and new accounts
+
+Someone who pays **as a guest** and later creates an account with the **same email** finds those orders in **My Orders** (with cancelling while Pending, and reviews once Delivered), and what was left in the guest cart they paid from in their account cart. This happens only **after the email is verified** (right after verification, and again at every login), because orders contain a name, phone and address. Carts from checkouts that were never paid aren't moved. The verify and login responses report it in `linked` (see [docs/api.md](docs/api.md)).
+
 ## Testing
 
 ### Postman
 
-Import [docs/postman_collection.json](docs/postman_collection.json) into Postman. It has every endpoint, grouped as Health, Auth, Products, Cart, Checkout, Orders, Reviews, Admin and Webhooks.
+Import [docs/postman_collection.json](docs/postman_collection.json) into Postman. It has every endpoint, grouped as Health, Auth, Products, Cart, Delivery areas, Checkout, Orders, Reviews, Admin and Webhooks. The variables `deliveryRegionId` and `deliveryTownId` (both 1: Ashanti, Kumasi) are used by Checkout and the admin delivery requests.
 
 - Set the collection variable **`baseUrl`**: `http://localhost:5000` locally, or your Render address.
 - Run **Auth → Log in** first. Postman keeps the login cookie for the rest. For the Admin folder, change the `email` and `password` variables to your admin account.
-- Copy ids into the variables as you go (`orderId`, `reference`, `reviewId`…).
+- Copy ids into the variables as you go (`orderId`, `reference`, `reviewId`…). **`orderId` is the order's UUID** (the `id` from My Orders or the admin list, e.g. `3f2a9c1e-…`), not a number (BE26).
 - When pasting URLs, make sure there's **no space at the end**: Postman shows it as a faint dot, and the API then answers "The requested resource was not found."
 
 ### Paystack test payments (mobile money)
@@ -195,13 +206,13 @@ Commit and push the project. Check first that `.env` is **not** included: `git s
    - `NODE_ENV=production`, `DB_SSL=true`, and `DB_CA_CERT` = the whole certificate text;
    - the Aiven `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER` and `DB_PASSWORD`;
    - a **new** `JWT_SECRET`, and a strong `ADMIN_PASSWORD`;
-   - `CLIENT_URL` = the frontend's address (a placeholder until the frontend is deployed);
-   - `TRUST_PROXY_HOPS=1`, or `2` if the frontend forwards `/api`;
+   - `CLIENT_URL` = the frontend's **Vercel** address, e.g. `https://<your-app>.vercel.app` (no slash at the end). It's used for CORS, the Paystack return page and the links in emails;
+   - `TRUST_PROXY_HOPS=2` (shoppers reach the API through Vercel, then Render);
    - the Paystack test key, the Ethereal SMTP details, the store contact details and `LOGIN_CODE_ENABLED`.
 
    Don't set `PORT`; Render provides it.
 
-### 4. Starting data (once)
+### 4. Starting data
 Render's build only creates the **tables**. The starting data (categories, the 41 products with photos, settings, the admin and the demo data) is added **once**, from your computer:
 1. Create **`.env.production`** in the project folder with the Aiven values: `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`, `DB_SSL=true`, `DB_CA_CERT` (the whole certificate in double quotes; line breaks are fine), and the `ADMIN_EMAIL` and `ADMIN_PASSWORD` for the live admin account. **It's git-ignored** (every `.env.*` file except `.env.example`), so it's never committed.
 2. Run:
@@ -212,6 +223,12 @@ Render's build only creates the **tables**. The starting data (categories, the 4
 3. Check `https://<your-render-service>.onrender.com/api/products`: you should see 41 products with photos.
 
 Run it only once: a second run fails on the unique rules (for example category slugs), which stops the data from being duplicated. Until it has run, `/api/health` is fine, but `/api/products` answers 500, because the settings (like the USD rate) don't exist yet.
+
+**Adding one new seeder later** (a database that already has data): give the seeder's file name, and only that seeder runs (it's passed to sequelize-cli's `--seed` option):
+```bash
+npm run seed:production -- 20261012000001-delivery-areas.js
+```
+The delivery-areas seeder skips regions and towns that already exist, so running it twice does no harm, and it never overwrites fees the admin has changed.
 
 ### 5. Paystack webhook
 In the Paystack dashboard (**test mode**), go to **Settings → API Keys & Webhooks** and set the **Test Webhook URL** to:
@@ -226,8 +243,53 @@ https://<your-render-service>.onrender.com/api/webhooks/paystack
 
 **Render free plan:** the service sleeps after about 15 minutes without traffic, and the first request then takes up to a minute. Paystack retries webhooks that fail, and the verify endpoint is safe to call again, so no payment is lost.
 
-### Frontend and cookies
-In production the frontend and the API are on **different sites**, so the login and cart cookies are "third-party" cookies, which **Safari and some privacy settings block**. Recommended: let the frontend host forward `/api/*` to the Render address (a rewrite on Vercel, or a proxy/redirect on Netlify), and set `TRUST_PROXY_HOPS=2`. The cookies then belong to the frontend's own domain. Details are in [docs/api.md](docs/api.md) ("Base URL").
+### 7. Frontend on Vercel
+The React frontend is deployed on **Vercel**. Its `vercel.json` **rewrites** every `/api/*` request to the Render API, so the browser only ever talks to the Vercel address:
+
+```text
+shopper's browser ──► https://<your-app>.vercel.app/api/products
+                          │  Vercel rewrite (server-side, invisible to the browser)
+                          ▼
+                     https://<your-render-service>.onrender.com/api/products ──► Express
+```
+
+Why this matters:
+- **Cookies are first-party.** The login and cart cookies belong to the Vercel domain, so they work in every browser. Safari and some privacy settings block cookies from a *different* site, which is what happens if the frontend calls `onrender.com` directly.
+- **Rate limits need `TRUST_PROXY_HOPS=2` on Render.** Each request passes through **two** proxies: Vercel, then Render's own. Vercel puts the shopper's real IP in the `X-Forwarded-For` header. It overwrites any value the browser sends, so it can't be faked through Vercel (see [Vercel's request headers docs](https://vercel.com/docs/headers/request-headers)). Render then adds Vercel's IP. With `2`, Express reads the shopper's IP; with `1`, every shopper would appear as Vercel and share **one** limit (for example 10 logins per 15 minutes for the whole shop).
+- **Set `CLIENT_URL`** on Render to the Vercel address, so CORS accepts the frontend, Paystack returns shoppers to `/checkout/complete` on Vercel, and email links open the Vercel site.
+
+After changing `TRUST_PROXY_HOPS` or `CLIENT_URL` on Render, save; Render redeploys.
+
+**Known limit:** the Render address is still public, and with `2` trusted hops, someone who calls `onrender.com` **directly** (not through Vercel) could send their own `X-Forwarded-For` header and choose the IP the rate limiter sees. Shoppers always come through Vercel, so this only matters for deliberate abuse. Blocking direct access would need a secret header added by the proxy, which is beyond this project. Paystack's webhooks call Render directly and aren't affected: the webhook isn't rate-limited, and it's protected by its signature instead.
+
+### 8. Releasing a change that needs the frontend too (BE24: delivery areas)
+BE24 changes `POST /api/checkout`: it now **requires** `deliveryRegionId`. A frontend without the region and town picker would get a 400 at every checkout. So the backend and frontend go live together, in this order:
+
+1. **Merge the backend** (`dev` → `main`) and push. Render redeploys, and its build runs the BE24 migrations on Aiven (the two new tables and the new order columns).
+2. **Run the delivery seeder in production**, from your computer (`.env.production` as in step 4):
+   ```bash
+   npm run seed:production -- 20261012000001-delivery-areas.js
+   ```
+   Check `https://<your-render-service>.onrender.com/api/delivery-areas`: 16 regions.
+3. **Merge the frontend** (with the region and town picker, FE12). Vercel redeploys.
+
+Between steps 1 and 3 the live checkout is refused (no region is sent), so do the three steps one after another. Then test a real test payment to Tamale: the total should include GH₵ 50.00, and the email should say "Delivery to: Tamale, Northern — GHS 50.00".
+
+**BE25 (guest linking)** and **BE26 (order UUIDs)** go out in the same backend merge. BE26 changes order addresses from `/orders/9` to `/orders/<UUID>`, so the frontend must build order links from `order.id` (it already does if it never typed numbers in by hand). Its migration changes **every order row**, so **back up the production database first** (step 9).
+
+### 9. Backing up the production database
+Before a migration that changes existing rows (such as BE26's), take a copy of the Aiven database from your computer:
+
+- **MySQL Workbench:** connect to Aiven (host, port, user, password, and the downloaded CA certificate under **SSL**), then **Server → Data Export**, choose the database, **Export to Self-Contained File**, and **Start Export**.
+- **Or the command line** (`mysqldump` comes with MySQL; use the values from `.env.production`, and the CA certificate file you downloaded from Aiven):
+  ```bash
+  mysqldump --host=<DB_HOST> --port=<DB_PORT> --user=<DB_USER> -p \
+    --ssl-mode=VERIFY_CA --ssl-ca=ca.pem \
+    --single-transaction --set-gtid-purged=OFF <DB_NAME> > adorn-backup-$(date +%F).sql
+  ```
+  `-p` asks for the password, so it isn't saved in your shell history. Keep the `.sql` file **out of the project folder** (it contains customer details), and never commit it.
+
+To restore, if ever needed: `mysql --host=… --port=… --user=… -p --ssl-mode=VERIFY_CA --ssl-ca=ca.pem <DB_NAME> < adorn-backup-YYYY-MM-DD.sql`.
 
 ---
 
@@ -236,6 +298,7 @@ In production the frontend and the API are on **different sites**, so the login 
 - [docs/api.md](docs/api.md): every endpoint, for the frontend (requests, responses, errors).
 - [docs/backend-guide.md](docs/backend-guide.md): a study guide explaining how and why each part was built.
 - [docs/backend-plan.md](docs/backend-plan.md): the build plan (tasks BE1–BE22).
+- The extra tasks added after the plan: [BE23 product management](docs/BE23-product-management.md), [BE24 delivery zones](docs/BE24-delivery-zones.md), [BE25 linking guest orders](docs/BE25-link-guest-orders.md), [BE26 order UUIDs](docs/BE26-order-public-ids.md).
 
 ## Image credits
 

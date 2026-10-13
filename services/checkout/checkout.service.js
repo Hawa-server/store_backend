@@ -6,6 +6,8 @@
  * Steps:
  *   1. Find the shopper's cart and recheck every line (still sold, enough stock).
  *   2. Calculate subtotal, delivery fee and total on the server, in pesewas.
+ *      The delivery fee depends on the region and town chosen (BE24): the
+ *      town's own fee, else the region's (delivery.service.js).
  *   3. Save a Checkout row (status 'open') with a unique reference, plus a
  *      CheckoutItems snapshot of the lines being paid for.
  *   4. AFTER saving, ask Paystack to start a GHS mobile-money payment for that total.
@@ -22,6 +24,7 @@ const { sequelize, Checkout, CheckoutItem, CartItem, Product } = require('../../
 const AppError = require('../../utils/AppError');
 const cartService = require('../cart/cart.service');
 const settingsService = require('../settings/settings.service');
+const deliveryService = require('../delivery/delivery.service');
 const paystack = require('../payment/paystack.client');
 const { toUsdCents } = require('../../utils/currency');
 const { formatGhs } = require('../../utils/money');
@@ -77,21 +80,31 @@ async function priceCart(cart) {
 /*
  * startCheckout({ user, guestToken, details })
  * Receives: the logged-in user (or null for guests), the guest cart token (or
- *           null), and the validated { name, email, phone, address }.
- * Returns: { reference, accessCode, authorizationUrl, subtotalGhs,
- *            deliveryFeeGhs, totalGhs, currency, subtotalUsd, deliveryFeeUsd,
- *            totalUsd, usdRate, chargeNote } for the frontend to open
- *          Paystack's payment popup (accessCode) or page (authorizationUrl).
- * Throws: 400/409 from priceCart; 502 PAYMENT_FAILED if Paystack can't start
- *         the payment (the checkout is then marked 'failed').
+ *           null), and the validated { name, email, phone, address,
+ *           deliveryRegionId, deliveryTownId? }.
+ * Returns: { reference, accessCode, authorizationUrl, deliveryRegionName,
+ *            deliveryTownName, subtotalGhs, deliveryFeeGhs, totalGhs,
+ *            currency, subtotalUsd, deliveryFeeUsd, totalUsd, usdRate,
+ *            chargeNote } for the frontend to open Paystack's payment popup
+ *          (accessCode) or page (authorizationUrl).
+ * Throws: 400/409 from priceCart; 400 (fields.deliveryRegionId or
+ *         fields.deliveryTownId) for an area that can't be chosen;
+ *         502 PAYMENT_FAILED if Paystack can't start the payment (the
+ *         checkout is then marked 'failed').
  */
 async function startCheckout({ user, guestToken, details }) {
   const cart = await cartService.findCart({ user, guestToken });
 
   // The money is calculated here, from the database. Nothing the client sent
   // about prices or totals is used (the validator dropped it anyway).
+  const { deliveryRegionId, deliveryTownId, ...contact } = details;
   const { lines, subtotal } = await priceCart(cart);
-  const deliveryFee = await settingsService.getDeliveryFee();
+  // The fee for the chosen area, from the database (BE24). It's saved on the
+  // checkout below, and the order later copies THAT amount: if an admin
+  // changes the fee before the payment is confirmed, this shopper still pays
+  // (and is charged) exactly what they were shown.
+  const area = await deliveryService.resolveDeliveryArea({ regionId: deliveryRegionId, townId: deliveryTownId });
+  const deliveryFee = area.fee;
   const total = subtotal + deliveryFee;
   // Read the USD rate now, before anything is saved or sent to Paystack, so a
   // broken rate setting can't leave a half-started payment behind.
@@ -107,7 +120,12 @@ async function startCheckout({ user, guestToken, details }) {
         reference: createReference(),
         cartId: cart.id,
         userId: user ? user.id : null,
-        ...details,
+        ...contact,
+        // The area chosen, plus copies of its names (kept even if renamed later).
+        deliveryRegionId: area.regionId,
+        deliveryTownId: area.townId,
+        deliveryRegionName: area.regionName,
+        deliveryTownName: area.townName,
         subtotal,
         deliveryFee,
         total,
@@ -144,6 +162,9 @@ async function startCheckout({ user, guestToken, details }) {
     reference: checkout.reference,
     accessCode: paystackData.access_code,
     authorizationUrl: paystackData.authorization_url,
+    // null town = "Other town in this region".
+    deliveryRegionName: checkout.deliveryRegionName,
+    deliveryTownName: checkout.deliveryTownName,
     subtotalGhs: checkout.subtotal,
     deliveryFeeGhs: checkout.deliveryFee,
     totalGhs: checkout.total,
