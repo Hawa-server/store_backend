@@ -11,10 +11,10 @@ Keep it simple. This is a student project with a short deadline, so choose the s
 Admin features: only the admin endpoints in the plan (orders, status changes, refunds, review moderation, and the dashboard and threshold setting; product image uploads only if I ask). Nothing more.
 Stretch items are built only if I ask for them.
 Stack
-Express.js, Sequelize, MySQL (mysql2), Zod, bcryptjs, jsonwebtoken, cookie-parser, cors, helmet, express-rate-limit, dotenv, Nodemailer; nodemon for development. Jest + Supertest only for the stretch tests.
+Express.js, Sequelize, MySQL (mysql2), Zod, bcryptjs, jsonwebtoken, cookie-parser, cors, helmet, express-rate-limit, dotenv; nodemon for development. Jest + Supertest only for the stretch tests.
 Payments: Paystack in test mode, mobile money only, with server-side verification and webhooks.
 Images: ImageKit URLs (photos are uploaded through ImageKit's website; API uploads in BE21 are a stretch).
-Email: Nodemailer sending to a test inbox (Ethereal, smtp.ethereal.email; switched from Mailtrap in BE22).
+Email: Brevo's transactional email HTTP API (POST https://api.brevo.com/v3/smtp/email) using Node's built-in fetch; no SMTP and no email library, because Render's free plan blocks SMTP ports. (Earlier: Nodemailer with Mailtrap, then Ethereal.)
 Hosting: Render for the API, Aiven for MySQL (with SSL) for the production database.
 Don't add other libraries or services without asking first.
 Rules that always apply
@@ -29,7 +29,7 @@ Security: hash passwords with bcryptjs (cost 12); store verification links and l
 Login code: controlled by LOGIN_CODE_ENABLED. In development only, print codes to the console.
 Emails never break an order or login. Log failures and carry on. (Exception: a failed login code email tells the user to try again.)
 Images: use only ImageKit URLs listed in the plan (or saved through BE21, if built). Don't invent image addresses.
-If you're unsure how Paystack, ImageKit, or Ethereal works, check their official documentation or ask me. Don't guess endpoint names or fields.
+If you're unsure how Paystack, ImageKit, or Brevo works, check their official documentation or ask me. Don't guess endpoint names or fields.
 Comments for learning
 
 I'm a student and need to understand and explain this backend.
