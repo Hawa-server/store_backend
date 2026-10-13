@@ -11,7 +11,7 @@
     },
     {
       "key": "productId",
-      "value": "1"
+      "value": "paste-a-product-uuid-here"
     },
     {
       "key": "deliveryRegionId",
@@ -479,7 +479,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"productId\": 20,\n  \"quantity\": 1\n}",
+              "raw": "{\n  \"productId\": \"{{productId}}\",\n  \"quantity\": 1\n}",
               "options": {
                 "raw": {
                   "language": "json"

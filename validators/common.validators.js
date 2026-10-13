@@ -21,4 +21,15 @@ const page = z.preprocess(
     .default(1)
 );
 
-module.exports = { blankToUndefined, page };
+// A public id (BE26): the random UUID that orders and products show instead
+// of the database's counting number. A valid UUID passes through (trimmed,
+// lower-cased); ANYTHING else (an old number like "9", "abc"...) becomes null
+// instead of failing here. The lookup then finds nothing and the answer is
+// the usual 404 ("Order not found." / "Product not found."), the same as for
+// an id that doesn't exist. A 400 "must be a UUID" would hint at what real
+// ids look like.
+const publicId = z
+  .string()
+  .transform((value) => (z.uuid().safeParse(value.trim()).success ? value.trim().toLowerCase() : null));
+
+module.exports = { blankToUndefined, page, publicId };

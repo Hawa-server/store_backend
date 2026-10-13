@@ -19,7 +19,7 @@ const { toLimitOffset, toPage } = require('../../utils/pagination');
 const ADMIN_PAGE_SIZE = 20;
 
 const INCLUDES = [
-  { model: Product, attributes: ['id', 'name'] },
+  { model: Product, attributes: ['id', 'publicId', 'name'] },
   { model: User, as: 'reviewer', attributes: ['id', 'name', 'email'] },
   { model: User, as: 'hiddenBy', attributes: ['id', 'name'] },
 ];
@@ -33,7 +33,8 @@ const INCLUDES = [
 function toAdminReview(review) {
   return {
     id: review.id,
-    product: review.Product ? { id: review.Product.id, name: review.Product.name } : null,
+    // The product's public UUID, never the database's counting number.
+    product: review.Product ? { id: review.Product.publicId, name: review.Product.name } : null,
     reviewer: review.reviewer ? { id: review.reviewer.id, name: review.reviewer.name, email: review.reviewer.email } : null,
     rating: review.rating,
     text: review.text,

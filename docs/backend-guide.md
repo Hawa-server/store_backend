@@ -1931,6 +1931,31 @@ SELECT COUNT(*) AS orders, COUNT(DISTINCT publicId) AS unique_ids, SUM(publicId 
 SELECT id, publicId, orderNumber FROM Orders ORDER BY id DESC LIMIT 5;
 ```
 
+## Product ids become UUIDs too (after BE26)
+
+### What and why
+
+BE26 gave **orders** a random public id. Products now get the same treatment: every product's `id` in a response, every `productId` (cart lines, order items, reviews), and the `:id` in product addresses is a **UUID**. Products are public (anyone can list them), so this isn't about privacy like orders; it's about **consistency** (one rule for ids the frontend sees) and not revealing the catalogue's size or the order products were added in (`/products/42` after `/products/41`).
+
+### How (the BE26 pattern again)
+
+- **Migration `20261016000001-product-public-ids.js`:** add `Products.publicId` (nullable), give each product `crypto.randomUUID()`, then NOT NULL + UNIQUE. The integer `Products.id` stays the primary key, so CartItems, CheckoutItems, OrderItems, Reviews and ProductImages are untouched.
+- **Model default** for new products (admins adding one); the **products seeder** sets it itself (`bulkInsert` skips defaults).
+- **One shared validator** (`validators/common.validators.js` `publicId`) now serves orders and products: a UUID passes (lower-cased), anything else becomes `null` → the lookup finds nothing → **404 "Product not found."**. The cart body's `productId` uses it too, and an old number like `12` is treated the same way.
+- **UUID → internal id at the edge:** the catalogue, reviews, cart and admin product services look the product up by `publicId`, then carry on with its integer `id`. Stock locks, payments and rating maths didn't change.
+- **Outputs:** every product `id`/`productId` is `product.publicId`. Cart line ids, review ids, category ids and image ids stay numbers (they're not product ids).
+
+### A bug the test caught
+
+The cart view loads products with a fixed column list (`attributes: [...]`) to keep the query small. `publicId` wasn't in it, so cart lines came back with `productId: undefined`. Lesson: when a column is added and a query **chooses its columns**, the new column must be added there too. The test checks every product id in every response, so this couldn't slip through.
+
+### Check it yourself in MySQL Workbench
+
+```sql
+SELECT COUNT(*) AS products, COUNT(DISTINCT publicId) AS unique_ids FROM Products;
+SELECT id, publicId, name FROM Products ORDER BY id LIMIT 5;
+```
+
 ## Email: from SMTP (Nodemailer) to Brevo's HTTP API
 
 ### What changed and why

@@ -108,7 +108,7 @@ async function toCartView(cart) {
     include: [
       {
         model: Product,
-        attributes: ['id', 'name', 'priceGhs', 'stock', 'isActive'],
+        attributes: ['id', 'publicId', 'name', 'priceGhs', 'stock', 'isActive'],
         include: [
           { model: Category, attributes: ['name', 'slug'] },
           { model: ProductImage, as: 'images', attributes: ['url', 'altText', 'sortOrder', 'isMain'] },
@@ -144,7 +144,7 @@ async function toCartView(cart) {
     const images = [...product.images].sort((a, b) => a.sortOrder - b.sortOrder);
     return {
       id: item.id,
-      productId: product.id,
+      productId: product.publicId, // the product's UUID, never the counting number
       name: product.name,
       unitPriceGhs: product.priceGhs,
       unitPriceUsd,
@@ -191,11 +191,15 @@ async function addItem({ user, guestToken, productId, quantity }) {
     // both read the old quantity and both pass the checks.
     await Cart.findByPk(cart.id, { lock: transaction.LOCK.UPDATE, transaction });
 
-    const product = await Product.findOne({ where: { id: productId, isActive: true }, transaction });
+    // productId is the product's public UUID (or null if the body didn't hold
+    // one: then nothing matches, and it's the same 404 as an unknown product).
+    const product = productId
+      ? await Product.findOne({ where: { publicId: productId, isActive: true }, transaction })
+      : null;
     if (!product) throw new AppError(404, 'NOT_FOUND', 'Product not found.');
     if (product.stock === 0) throw new AppError(409, 'OUT_OF_STOCK', 'This product is out of stock.');
 
-    const existing = await CartItem.findOne({ where: { cartId: cart.id, productId }, transaction });
+    const existing = await CartItem.findOne({ where: { cartId: cart.id, productId: product.id }, transaction });
     const newQuantity = (existing ? existing.quantity : 0) + quantity;
 
     if (newQuantity > MAX_LINE_QUANTITY) {
@@ -207,7 +211,7 @@ async function addItem({ user, guestToken, productId, quantity }) {
     }
 
     if (existing) await existing.update({ quantity: newQuantity }, { transaction });
-    else await CartItem.create({ cartId: cart.id, productId, quantity }, { transaction });
+    else await CartItem.create({ cartId: cart.id, productId: product.id, quantity }, { transaction });
 
     await touchCart(cart, transaction);
   });

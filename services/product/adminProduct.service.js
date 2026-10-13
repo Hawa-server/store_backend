@@ -18,6 +18,8 @@
  *     checkouts: orders and checkouts keep the prices saved with them.
  *   - These are live database changes. Re-running the seeders resets the
  *     products to docs/catalogue.md.
+ *   - Ids: addresses and responses use the product's public UUID (shown as
+ *     `id`); the counting number Products.id stays inside the server.
  */
 const { Op, UniqueConstraintError } = require('sequelize');
 const { sequelize, Product, ProductImage, Category } = require('../../models');
@@ -44,7 +46,7 @@ function sortedImages(product) {
  */
 function toListItem(product, mainImage) {
   return {
-    id: product.id,
+    id: product.publicId,
     name: product.name,
     category: { id: product.Category.id, name: product.Category.name, slug: product.Category.slug },
     priceGhs: product.priceGhs,
@@ -133,11 +135,23 @@ async function listProducts({ search, category, status, page }) {
 }
 
 /*
- * getProduct(id)
- * Receives: a product id. Returns: the admin detail (inactive ones too).
+ * internalId(publicId)
+ * Receives: a product's public UUID from the URL (or null if it wasn't one).
+ * Returns: the product's internal id. Throws 404 "Product not found." when
+ *          there's no such product (inactive products count: admins see them).
  */
-async function getProduct(id) {
-  return loadDetail(id);
+async function internalId(publicId) {
+  const product = publicId ? await Product.findOne({ where: { publicId }, attributes: ['id'] }) : null;
+  if (!product) throw new AppError(404, 'NOT_FOUND', 'Product not found.');
+  return product.id;
+}
+
+/*
+ * getProduct(publicId)
+ * Receives: a product's public UUID. Returns: the admin detail (inactive ones too).
+ */
+async function getProduct(publicId) {
+  return loadDetail(await internalId(publicId));
 }
 
 /*
@@ -218,7 +232,7 @@ async function createProduct(data, adminId) {
 
 /*
  * updateProduct(id, changes, adminId)
- * Receives: the product id, the validated changes (any of name, description,
+ * Receives: the product's public UUID, the validated changes (any of name, description,
  *           categoryId, priceGhs, stock, isActive, image; plus expectedStock
  *           when stock is sent) and the admin's id.
  * Returns: the updated product (admin detail).
@@ -226,8 +240,10 @@ async function createProduct(data, adminId) {
  *         409 if stock changed since the admin opened the product (with
  *         currentStock in the error). Nothing is saved when it throws.
  */
-async function updateProduct(id, changes, adminId) {
+async function updateProduct(publicId, changes, adminId) {
   const changed = Object.keys(changes).filter((key) => key !== 'expectedStock');
+  // The UUID from the URL → the internal id used below (404 if unknown).
+  const id = await internalId(publicId);
 
   await duplicateNameAware(() =>
     withDeadlockRetry(() =>

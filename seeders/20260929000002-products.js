@@ -15,6 +15,7 @@
  */
 'use strict';
 
+const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 
@@ -112,6 +113,8 @@ module.exports = {
       products.map((p) => {
         if (!idBySlug[p.category]) throw new Error(`Category "${p.category}" not found. Run the categories seeder first.`);
         return {
+          // bulkInsert skips the model's defaults, so the public id is set here.
+          publicId: crypto.randomUUID(),
           categoryId: idBySlug[p.category],
           name: p.name,
           description: p.description,

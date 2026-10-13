@@ -150,7 +150,7 @@ Import [docs/postman_collection.json](docs/postman_collection.json) into Postman
 
 - Set the collection variable **`baseUrl`**: `http://localhost:5000` locally, or your Render address.
 - Run **Auth → Log in** first. Postman keeps the login cookie for the rest. For the Admin folder, change the `email` and `password` variables to your admin account.
-- Copy ids into the variables as you go (`orderId`, `reference`, `reviewId`…). **`orderId` is the order's UUID** (the `id` from My Orders or the admin list, e.g. `3f2a9c1e-…`), not a number (BE26).
+- Copy ids into the variables as you go (`orderId`, `reference`, `reviewId`…). **`orderId` and `productId` are UUIDs** (the `id` from My Orders / the admin list, or from `GET /api/products`, e.g. `3f2a9c1e-…`), not numbers.
 - When pasting URLs, make sure there's **no space at the end**: Postman shows it as a faint dot, and the API then answers "The requested resource was not found."
 
 ### Paystack test payments (mobile money)
@@ -289,7 +289,7 @@ BE24 changes `POST /api/checkout`: it now **requires** `deliveryRegionId`. A fro
 
 Between steps 1 and 3 the live checkout is refused (no region is sent), so do the three steps one after another. Then test a real test payment to Tamale: the total should include GH₵ 50.00, and the email should say "Delivery to: Tamale, Northern — GHS 50.00".
 
-**BE25 (guest linking)** and **BE26 (order UUIDs)** go out in the same backend merge. BE26 changes order addresses from `/orders/9` to `/orders/<UUID>`, so the frontend must build order links from `order.id` (it already does if it never typed numbers in by hand). Its migration changes **every order row**, so **back up the production database first** (step 9).
+**BE25 (guest linking)**, **BE26 (order UUIDs)** and **product UUIDs** go out in the same backend merge. Order and product addresses change from numbers (`/orders/9`, `/products/12`) to UUIDs, and the cart's `productId` must be the product's UUID, so the frontend must use `order.id` / `product.id` as strings, never numbers. The migrations change **every order and product row**, so **back up the production database first** (step 9).
 
 ### 9. Backing up the production database
 Before a migration that changes existing rows (such as BE26's), take a copy of the Aiven database from your computer:
