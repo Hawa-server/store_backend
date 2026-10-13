@@ -35,7 +35,7 @@ const ITEMS_INCLUDE = {
   include: [
     {
       model: Product,
-      attributes: ['id'],
+      attributes: ['id', 'publicId'],
       include: [{ model: ProductImage, as: 'images', attributes: ['url', 'altText', 'sortOrder', 'isMain'] }],
     },
   ],
@@ -90,7 +90,8 @@ function loadOrderDetails(where) {
 function toItemView(item) {
   const images = item.Product ? [...item.Product.images].sort((a, b) => a.sortOrder - b.sortOrder) : [];
   return {
-    productId: item.productId,
+    // The product's public UUID, never the database's counting number.
+    productId: item.Product ? item.Product.publicId : null,
     name: item.productName,
     unitPriceGhs: item.unitPrice,
     quantity: item.quantity,

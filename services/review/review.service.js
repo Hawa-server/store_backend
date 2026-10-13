@@ -70,14 +70,17 @@ function reviewerName(fullName) {
 }
 
 /*
- * toOwnReview(review)
- * Receives: a Review. Returns: how the reviewer sees their own review,
- *           including whether the store has hidden it.
+ * toOwnReview(review, productPublicId)
+ * Receives: a Review, and its product's public UUID (by default taken from
+ *           review.Product, when the review was loaded with its product).
+ * Returns: how the reviewer sees their own review, including whether the
+ *          store has hidden it. productId is the product's UUID, never the
+ *          database's counting number.
  */
-function toOwnReview(review) {
+function toOwnReview(review, productPublicId = review.Product && review.Product.publicId) {
   return {
     id: review.id,
-    productId: review.productId,
+    productId: productPublicId,
     rating: review.rating,
     text: review.text,
     createdAt: review.createdAt,
@@ -87,12 +90,16 @@ function toOwnReview(review) {
 }
 
 /*
- * findActiveProduct(productId)
- * Receives: a product id. Returns: the product. Throws 404 if it doesn't
- *           exist or has been removed from the shop.
+ * findActiveProduct(publicId)
+ * Receives: a product's public UUID from the URL (or null if it wasn't one).
+ * Returns: the product ({ id, publicId }); its internal id is used for the
+ *          review queries. Throws 404 if it doesn't exist or has been
+ *          removed from the shop.
  */
-async function findActiveProduct(productId) {
-  const product = await Product.findOne({ where: { id: productId, isActive: true }, attributes: ['id'] });
+async function findActiveProduct(publicId) {
+  const product = publicId
+    ? await Product.findOne({ where: { publicId, isActive: true }, attributes: ['id', 'publicId'] })
+    : null;
   if (!product) throw new AppError(404, 'NOT_FOUND', 'Product not found.');
   return product;
 }
@@ -104,8 +111,8 @@ async function findActiveProduct(productId) {
  *          `summary` = { average, count, breakdown }. Each item:
  *          { id, rating, text, reviewerName, verifiedPurchase, createdAt, editedAt }.
  */
-async function listProductReviews(productId, { sort, page }) {
-  await findActiveProduct(productId);
+async function listProductReviews(publicId, { sort, page }) {
+  const { id: productId } = await findActiveProduct(publicId);
 
   const { count, rows } = await Review.findAndCountAll({
     where: { productId, isHidden: false },
@@ -137,8 +144,9 @@ async function listProductReviews(productId, { sort, page }) {
  * Throws: 404 unknown/inactive product; 409 already reviewed; 403 if the
  *         user hasn't received the product.
  */
-async function createReview(user, productId, { rating, text }) {
-  await findActiveProduct(productId);
+async function createReview(user, publicId, { rating, text }) {
+  const product = await findActiveProduct(publicId);
+  const productId = product.id;
 
   if (await Review.findOne({ where: { userId: user.id, productId }, attributes: ['id'] })) {
     throw new AppError(409, 'CONFLICT', DUPLICATE_MESSAGE);
@@ -149,7 +157,7 @@ async function createReview(user, productId, { rating, text }) {
 
   try {
     const review = await Review.create({ userId: user.id, productId, rating, text: text ?? null });
-    return toOwnReview(review);
+    return toOwnReview(review, product.publicId);
   } catch (err) {
     // Two "submit" clicks at the same moment: both passed the check above,
     // but the database's UNIQUE (userId, productId) rule lets only one in.
@@ -165,7 +173,10 @@ async function createReview(user, productId, { rating, text }) {
  *          answer as a review that doesn't exist.
  */
 async function findOwnReview(user, reviewId) {
-  const review = await Review.findOne({ where: { id: reviewId, userId: user.id } });
+  const review = await Review.findOne({
+    where: { id: reviewId, userId: user.id },
+    include: [{ model: Product, attributes: ['publicId'] }],
+  });
   if (!review) throw new AppError(404, 'NOT_FOUND', 'Review not found.');
   return review;
 }
@@ -205,7 +216,7 @@ async function deleteReview(user, reviewId) {
  */
 async function getViewer(user, productId) {
   if (!user) return null;
-  const mine = await Review.findOne({ where: { userId: user.id, productId } });
+  const mine = await Review.findOne({ where: { userId: user.id, productId }, include: [{ model: Product, attributes: ['publicId'] }] });
   return {
     canReview: !mine && (await isEligible(user.id, productId)),
     myReview: mine ? toOwnReview(mine) : null,

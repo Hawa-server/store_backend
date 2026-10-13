@@ -4,6 +4,7 @@
  * Zod schemas for the public browsing endpoints (/api/categories, /api/products).
  */
 const { z } = require('zod');
+const { publicId } = require('./common.validators');
 
 // GET /api/products?category=<slug>. The category is optional; a slug is
 // lowercase letters, numbers and dashes (e.g. "bags").
@@ -15,13 +16,10 @@ const productListQuery = z.object({
     .optional(),
 });
 
-// GET /api/products/:id. URL parameters always arrive as text, so coerce
-// "12" to the number 12, then insist on a positive whole number.
-const productIdParams = z.object({
-  id: z.coerce
-    .number({ error: 'Product id must be a number.' })
-    .int({ error: 'Product id must be a whole number.' })
-    .positive({ error: 'Product id must be a positive number.' }),
-});
+// GET /api/products/:id (and its reviews, and /api/admin/products/:id).
+// :id is the product's public UUID, never the database's counting number.
+// Anything that isn't a UUID becomes null, and the lookup answers the usual
+// 404 "Product not found." (see common.validators.js publicId).
+const productIdParams = z.object({ id: publicId });
 
 module.exports = { productListQuery, productIdParams };

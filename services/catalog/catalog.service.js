@@ -49,7 +49,8 @@ function pickMainImage(images) {
  */
 function toProductSummary(product, rating, pesewasPerUsd) {
   return {
-    id: product.id,
+    // The public UUID; product.id (the counting number) stays inside the server.
+    id: product.publicId,
     name: product.name,
     priceGhs: product.priceGhs,
     priceUsd: toUsdCents(product.priceGhs, pesewasPerUsd),
@@ -115,14 +116,16 @@ async function listProducts({ category }) {
 }
 
 /*
- * getProductDetails(id, viewerUser)
- * Receives: the product id and the logged-in user (or null for guests).
+ * getProductDetails(publicId, viewerUser)
+ * Receives: the product's public UUID from the URL (or null if the address
+ *           didn't hold one) and the logged-in user (or null for guests).
  * Returns: the full product shape. Throws 404 for unknown or inactive products,
  *          so a deactivated product looks exactly like one that never existed.
  */
-async function getProductDetails(id, viewerUser) {
+async function getProductDetails(publicId, viewerUser) {
+  if (!publicId) throw new AppError(404, 'NOT_FOUND', 'Product not found.');
   const product = await Product.findOne({
-    where: { id, isActive: true },
+    where: { publicId, isActive: true },
     include: PRODUCT_INCLUDES,
     order: IMAGE_ORDER,
   });

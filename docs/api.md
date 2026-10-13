@@ -121,6 +121,14 @@ Every error response has this shape:
 
 The exact status used by each endpoint is listed with that endpoint.
 
+### Product ids (UUIDs)
+
+Products use the same kind of id as orders (below): every product's **`id`**, and every **`productId`** (cart lines, order items, reviews), is a **UUID** string such as `6b1f0c2e-8d4a-4f7b-9e21-3a5c7d9e1f40`. It's also the `:id` in `GET /api/products/:id`, `GET` and `POST /api/products/:id/reviews`, and `GET` and `PATCH /api/admin/products/:id`, and the `productId` sent to `POST /api/cart/items`.
+
+- The database's counting number is never sent, so ids don't reveal how many products exist or the order they were added in.
+- A value that isn't a product UUID (including an old number like `12`) gets the same **404 "Product not found."** as a product that doesn't exist.
+- Still numbers: category ids (`categoryId`), cart line ids (`/api/cart/items/:id`), review ids, image ids, delivery area ids, refund ids and user ids.
+
 ### Order ids (UUIDs)
 
 *(BE26)* Every order has a random public id, a **UUID** such as `3f2a9c1e-7b4d-4e8a-9f01-6c2d5e8b7a43`. It's the order's **`id`** in every response (My Orders, order details, the confirmation page, checkout verify, the admin's lists and details, the dashboard), and the **`:id`** in every order address:
@@ -135,7 +143,7 @@ POST  /api/admin/orders/:id/refunds   POST /api/admin/orders/:id/refunds/:refund
 - The database's counting number is **never** sent, so order addresses can't be guessed and don't reveal how many orders the store has.
 - Anything that isn't a valid order UUID in an order address, **including an old number such as `9`**, gets the same **404 `NOT_FOUND` "Order not found."** as an order that doesn't exist (never a 400). Show "Order not found" with a link to My Orders. Old links like `/orders/9` from earlier test emails therefore show "Order not found".
 - `orderNumber` (e.g. `ORD-20261012-K8W82Y`) is still what people read and quote; it's a date plus random letters, so it reveals nothing either.
-- Other ids (products, cart items, reviews, refunds, delivery areas) are unchanged numbers.
+- Products use UUIDs too (above). Cart line, review, refund, category and delivery area ids are unchanged numbers.
 
 ### Pagination format
 
@@ -644,7 +652,7 @@ Lists active products, sorted A–Z by name. Not paginated.
 {
   "products": [
     {
-      "id": 1,
+      "id": "6b1f0c2e-8d4a-4f7b-9e21-3a5c7d9e1f40",
       "name": "Black Canvas Tote Bag",
       "priceGhs": 12000,
       "priceUsd": 774,
@@ -655,7 +663,7 @@ Lists active products, sorted A–Z by name. Not paginated.
       "rating": { "average": 4.5, "count": 2 }
     },
     {
-      "id": 7,
+      "id": "0d8e2a41-5b6c-4e7f-8a9b-1c2d3e4f5a60",
       "name": "Black Leather Mini Duffle Bag",
       "priceGhs": 38000,
       "priceUsd": 2452,
@@ -692,7 +700,7 @@ One product's full details.
 ```json
 {
   "product": {
-    "id": 1,
+    "id": "6b1f0c2e-8d4a-4f7b-9e21-3a5c7d9e1f40",
     "name": "Black Canvas Tote Bag",
     "priceGhs": 12000,
     "priceUsd": 774,
@@ -719,7 +727,7 @@ Each product currently has one image, so `images` has one entry. The list suppor
   "viewer": {
     "canReview": false,
     "myReview": {
-      "id": 7, "productId": 1, "rating": 5, "text": "Beautiful bag.",
+      "id": 7, "productId": "6b1f0c2e-8d4a-4f7b-9e21-3a5c7d9e1f40", "rating": 5, "text": "Beautiful bag.",
       "createdAt": "2026-09-29T17:32:28.000Z", "editedAt": null, "isHidden": false
     }
   }
@@ -733,8 +741,7 @@ Each product currently has one image, so `images` has one entry. The list suppor
 
 | Status | Code | When |
 |---|---|---|
-| 400 | `INVALID_REQUEST` | `id` isn't a positive whole number (for example `abc` or `1.5`); see `fields.id` |
-| 404 | `NOT_FOUND` | `"Product not found."` The product doesn't exist or has been removed from the shop |
+| 404 | `NOT_FOUND` | `"Product not found."` The product doesn't exist, has been removed from the shop, or `:id` isn't a product UUID (e.g. an old number like `12`, or `abc`) |
 
 ### Reviews
 
@@ -802,8 +809,8 @@ The public reviews for one product, with a summary for the star breakdown.
 
 | Status | Code | When |
 |---|---|---|
-| 400 | `INVALID_REQUEST` | A bad `id`, `sort` (`"Sort must be recent, highest or lowest."`) or `page` |
-| 404 | `NOT_FOUND` | `"Product not found."` |
+| 400 | `INVALID_REQUEST` | A bad `sort` (`"Sort must be recent, highest or lowest."`) or `page` |
+| 404 | `NOT_FOUND` | `"Product not found."` Unknown, removed from the shop, or `:id` isn't a product UUID (e.g. an old number like `12`) |
 
 #### `POST /api/products/:id/reviews`
 
@@ -826,7 +833,7 @@ Writes a review for a product you've received.
 **201 Created**: your review, in the same shape as `viewer.myReview`:
 
 ```json
-{ "review": { "id": 22, "productId": 33, "rating": 4, "text": "Gentle on my skin.", "createdAt": "2026-10-01T12:02:16.264Z", "editedAt": null, "isHidden": false } }
+{ "review": { "id": 22, "productId": "7e6d5c4b-3a29-4818-b7f6-e5d4c3b2a190", "rating": 4, "text": "Gentle on my skin.", "createdAt": "2026-10-01T12:02:16.264Z", "editedAt": null, "isHidden": false } }
 ```
 
 **Errors**
@@ -836,7 +843,7 @@ Writes a review for a product you've received.
 | 400 | `INVALID_REQUEST` | Validation failed: `fields.rating` (`"Rating must be from 1 to 5."`…) or `fields.text` (`"Your review must be 1,000 characters or fewer."`) |
 | 401 | `UNAUTHENTICATED` | Not logged in. Show "Log in to write a review" |
 | 403 | `FORBIDDEN` | `"You can review a product after it has been delivered to you."` |
-| 404 | `NOT_FOUND` | `"Product not found."` |
+| 404 | `NOT_FOUND` | `"Product not found."` Unknown, removed from the shop, or `:id` isn't a product UUID (e.g. an old number like `12`) |
 | 409 | `CONFLICT` | `"You've already reviewed this product. You can edit your review instead."` |
 | 429 | `RATE_LIMITED` | Too many review actions from this IP |
 
@@ -903,7 +910,7 @@ The cart works for **guests and logged-in users**. The frontend never sends a ca
     "items": [
       {
         "id": 12,
-        "productId": 1,
+        "productId": "6b1f0c2e-8d4a-4f7b-9e21-3a5c7d9e1f40",
         "name": "Black Canvas Tote Bag",
         "unitPriceGhs": 12000,
         "unitPriceUsd": 774,
@@ -964,13 +971,13 @@ Adds a product to the cart. If the product is already in the cart, its quantity 
 
 | Field | Type | Rules |
 |---|---|---|
-| `productId` | number | Required, a positive whole number |
+| `productId` | string | Required. The product's **UUID** (its `id` from `GET /api/products`). A value that isn't a product UUID (e.g. an old number like `12`) gets **404 "Product not found."** |
 | `quantity` | number | Required, a whole number from 1 to 99 |
 
 Both must be JSON numbers (`1`, not `"1"`). Any other fields, such as a price or a cart ID, are ignored.
 
 ```json
-{ "productId": 1, "quantity": 1 }
+{ "productId": "6b1f0c2e-8d4a-4f7b-9e21-3a5c7d9e1f40", "quantity": 1 }
 ```
 
 **200 OK:** the updated cart object.
@@ -979,9 +986,9 @@ Both must be JSON numbers (`1`, not `"1"`). Any other fields, such as a price or
 
 | Status | Code | Message / when |
 |---|---|---|
-| 400 | `INVALID_REQUEST` | Validation failed (see `fields`): quantity is 0, negative, a decimal, text or over 99, or productId is invalid |
+| 400 | `INVALID_REQUEST` | Validation failed (see `fields`): quantity is 0, negative, a decimal, text or over 99, or `productId` is missing |
 | 400 | `INVALID_REQUEST` | `"You can add up to 99 of this product."` The line would go over 99 in total (quantity already in the cart plus this one) |
-| 404 | `NOT_FOUND` | `"Product not found."` Unknown, or removed from the shop |
+| 404 | `NOT_FOUND` | `"Product not found."` Unknown, removed from the shop, or `productId` isn't a product UUID (e.g. an old number like `12`) |
 | 409 | `OUT_OF_STOCK` | `"This product is out of stock."` Stock is 0 |
 | 409 | `OUT_OF_STOCK` | `"Only X available."` Quantity already in the cart plus this one is more than the stock |
 
@@ -1290,7 +1297,7 @@ The orders that **belong to this account**: those placed while logged in, plus *
       "totalGhs": 8000,
       "itemCount": 1,
       "items": [
-        { "productId": 31, "name": "Silver Pocket Mirror", "unitPriceGhs": 6000, "quantity": 1, "lineTotalGhs": 6000, "image": { "url": "https://ik.imagekit.io/ADORN/ADORN/Products/Accessories/pocket-mirror-1.jpg", "altText": "Silver compact pocket mirror" } }
+        { "productId": "9c8b7a6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d", "name": "Silver Pocket Mirror", "unitPriceGhs": 6000, "quantity": 1, "lineTotalGhs": 6000, "image": { "url": "https://ik.imagekit.io/ADORN/ADORN/Products/Accessories/pocket-mirror-1.jpg", "altText": "Silver compact pocket mirror" } }
       ]
     }
   ],
@@ -1333,7 +1340,7 @@ One of **your own** orders, with its status history and refunds.
     "placedAt": "2026-09-30T14:05:12.000Z",
     "canCancel": true,
     "items": [
-      { "productId": 31, "name": "Silver Pocket Mirror", "unitPriceGhs": 6000, "quantity": 1, "lineTotalGhs": 6000, "image": { "url": "https://ik.imagekit.io/ADORN/ADORN/Products/Accessories/pocket-mirror-1.jpg", "altText": "Silver compact pocket mirror" } }
+      { "productId": "9c8b7a6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d", "name": "Silver Pocket Mirror", "unitPriceGhs": 6000, "quantity": 1, "lineTotalGhs": 6000, "image": { "url": "https://ik.imagekit.io/ADORN/ADORN/Products/Accessories/pocket-mirror-1.jpg", "altText": "Silver compact pocket mirror" } }
     ],
     "subtotalGhs": 6000,
     "deliveryFeeGhs": 2000,
@@ -1445,7 +1452,7 @@ Loads one order for the **order confirmation page**. The frontend page address i
     "placedAt": "2026-09-30T18:44:21.000Z",
     "items": [
       {
-        "productId": 22,
+        "productId": "2b4d6f8a-0c1e-4a3b-9d5f-7e9a1c3e5b7d",
         "name": "Black Volumising Mascara",
         "unitPriceGhs": 7000,
         "quantity": 2,
@@ -1522,8 +1529,8 @@ The admin home page: sales, refunds, recent orders, things needing attention, an
   "stock": {
     "lowStockThreshold": 5,
     "lowStockCount": 2,
-    "lowStock": [ { "id": 15, "name": "Makeup Setting Spray", "stock": 2 } ],
-    "outOfStock": [ { "id": 30, "name": "Pearl Stud Earrings", "stock": 0 } ]
+    "lowStock": [ { "id": "a3c5e7f9-1b2d-4f6a-8c0e-2d4f6a8c0e12", "name": "Makeup Setting Spray", "stock": 2 } ],
+    "outOfStock": [ { "id": "f1e2d3c4-b5a6-4978-8a6b-5c4d3e2f1a09", "name": "Pearl Stud Earrings", "stock": 0 } ]
   }
 }
 ```
@@ -1610,7 +1617,7 @@ All products, **including inactive ones**, for the admin's product screen. **A�
 {
   "items": [
     {
-      "id": 1,
+      "id": "6b1f0c2e-8d4a-4f7b-9e21-3a5c7d9e1f40",
       "name": "Black Canvas Tote Bag",
       "category": { "id": 1, "name": "Bags", "slug": "bags" },
       "priceGhs": 12000,
@@ -1648,7 +1655,7 @@ One product with everything the edit form needs. **Inactive products are returne
 ```json
 {
   "product": {
-    "id": 1,
+    "id": "6b1f0c2e-8d4a-4f7b-9e21-3a5c7d9e1f40",
     "name": "Black Canvas Tote Bag",
     "category": { "id": 1, "name": "Bags", "slug": "bags" },
     "priceGhs": 12000,
@@ -1667,7 +1674,7 @@ One product with everything the edit form needs. **Inactive products are returne
 
 **Keep `stock`:** send it back as `expectedStock` when you change the stock (see `PATCH` below).
 
-**Errors:** 400 (a bad `id`), 401, 403, **404** `NOT_FOUND` `"Product not found."`
+**Errors:** 401, 403, **404** `NOT_FOUND` `"Product not found."` (also when `:id` isn't a product UUID)
 
 #### `POST /api/admin/products`
 
@@ -1749,7 +1756,7 @@ Edits a product. Send **only the fields that change**, at least one of: `name`, 
 | 400 | `INVALID_REQUEST` | Any validation error from `POST`; `fields._` "Send at least one field to change."; `fields.expectedStock` when `stock` is sent without it |
 | 401 | `UNAUTHENTICATED` | Not logged in |
 | 403 | `FORBIDDEN` | Not an admin, or the `X-Requested-With` header is missing |
-| 404 | `NOT_FOUND` | `"Product not found."` |
+| 404 | `NOT_FOUND` | `"Product not found."` Unknown, or `:id` isn't a product UUID |
 | 409 | `CONFLICT` | `"A product with this name already exists."` |
 | 409 | `CONFLICT` | **The stock changed since you opened the product.** Nothing was saved, including any other fields in the same request. The error includes the current stock: |
 
@@ -1975,7 +1982,7 @@ Everything staff need to handle one order.
     "deliveryRegionName": "Greater Accra",
     "deliveryTownName": "Accra",
     "items": [
-      { "productId": 31, "name": "Silver Pocket Mirror", "unitPriceGhs": 6000, "quantity": 1, "lineTotalGhs": 6000, "image": { "url": "https://ik.imagekit.io/ADORN/ADORN/Products/Accessories/pocket-mirror-1.jpg", "altText": "Silver compact pocket mirror" } }
+      { "productId": "9c8b7a6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d", "name": "Silver Pocket Mirror", "unitPriceGhs": 6000, "quantity": 1, "lineTotalGhs": 6000, "image": { "url": "https://ik.imagekit.io/ADORN/ADORN/Products/Accessories/pocket-mirror-1.jpg", "altText": "Silver compact pocket mirror" } }
     ],
     "subtotalGhs": 6000,
     "deliveryFeeGhs": 2000,
@@ -2185,7 +2192,7 @@ All reviews, for moderation: **newest first, 20 per page**.
   "items": [
     {
       "id": 7,
-      "product": { "id": 1, "name": "Black Canvas Tote Bag" },
+      "product": { "id": "6b1f0c2e-8d4a-4f7b-9e21-3a5c7d9e1f40", "name": "Black Canvas Tote Bag" },
       "reviewer": { "id": 10, "name": "Ama Mensah", "email": "ama.mensah@example.com" },
       "rating": 5,
       "text": "Beautiful bag and very strong.",

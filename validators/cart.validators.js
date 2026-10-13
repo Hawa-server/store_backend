@@ -5,6 +5,7 @@
  * and/or a quantity: never a cart id, price or total, which the server works out.
  */
 const { z } = require('zod');
+const { publicId } = require('./common.validators');
 
 /*
  * quantity(min)
@@ -22,11 +23,15 @@ function quantity(min) {
 }
 
 // POST /api/cart/items
+// productId is the product's public UUID (the `id` from GET /api/products).
+// A missing one is a 400; anything that isn't a UUID becomes null and gets
+// the same 404 "Product not found." as an unknown product.
 const addItemBody = z.object({
-  productId: z
-    .number({ error: 'Product id must be a number.' })
-    .int({ error: 'Product id must be a whole number.' })
-    .positive({ error: 'Product id must be a positive number.' }),
+  // An old numeric id (12) is turned into text first, so it gets the 404 too.
+  productId: z.preprocess(
+    (value) => (typeof value === 'number' ? String(value) : value),
+    z.string({ error: 'Product id is required.' }).pipe(publicId)
+  ),
   quantity: quantity(1),
 });
 

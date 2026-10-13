@@ -4,7 +4,7 @@
  * Zod schemas for the order endpoints (shopper and admin).
  */
 const { z } = require('zod');
-const { blankToUndefined, page } = require('./common.validators');
+const { blankToUndefined, page, publicId } = require('./common.validators');
 
 const ORDER_STATUSES = ['Pending', 'Shipped', 'Delivered', 'Cancelled'];
 
@@ -34,15 +34,10 @@ const calendarDate = (label) =>
 const myOrdersQuery = z.object({ page });
 
 // GET /api/orders/:id, POST /api/orders/:id/cancel and the /api/admin/orders/:id
-// routes. Since BE26 :id is the order's public id, a UUID such as
-// "3f2a9c1e-7b4d-4e8a-9f01-6c2d5e8b7a43", never the database's counting number.
-// Anything that isn't a UUID (an old number like "9", "abc"...) becomes null
-// instead of failing here: the lookup then finds nothing and the answer is the
-// same 404 "Order not found." as for a missing order. A 400 "must be a UUID"
-// would hint at what real ids look like.
-const orderPublicId = z
-  .string()
-  .transform((value) => (z.uuid().safeParse(value.trim()).success ? value.trim().toLowerCase() : null));
+// routes. Since BE26 :id is the order's public id (a UUID), never the
+// database's counting number; anything else becomes null → 404 (see
+// common.validators.js publicId).
+const orderPublicId = publicId;
 const orderIdParams = z.object({ id: orderPublicId });
 
 // GET /api/admin/orders?status=&from=&to=&page=

@@ -87,7 +87,8 @@ async function salesFigures(start) {
  */
 async function stockWarnings() {
   const threshold = await getLowStockThreshold();
-  const attributes = ['id', 'name', 'stock'];
+  // `id` in the response is the product's public UUID (the counting number stays inside).
+  const attributes = [['publicId', 'id'], 'name', 'stock'];
   const lowStock = threshold >= 1
     ? await Product.findAll({
       where: { isActive: true, stock: { [Op.between]: [1, threshold] } },
