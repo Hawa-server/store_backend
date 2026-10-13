@@ -10,6 +10,10 @@
  *
  * Ownership: My Orders always filters by the logged-in user's id, taken from
  * the login cookie. Another user's order is simply "not found".
+ *
+ * Ids (BE26): addresses and responses use the order's random publicId (a
+ * UUID), shown to the frontend as `id`. The counting number Orders.id stays
+ * inside the server (joins, foreign keys) and is never sent.
  */
 const { Order, OrderItem, OrderStatusChange, Refund, User, Product, ProductImage } = require('../../models');
 const { toLimitOffset, toPage } = require('../../utils/pagination');
@@ -104,6 +108,8 @@ function toItemView(item) {
  */
 function toConfirmationView(order) {
   return {
+    // The public UUID (BE26), never the database's counting number.
+    id: order.publicId,
     orderNumber: order.orderNumber,
     status: order.status,
     placedAt: order.createdAt,
@@ -115,6 +121,11 @@ function toConfirmationView(order) {
     paymentMethod: order.paymentMethod,
     email: order.email,
     delivery: { name: order.name, phone: order.phone, address: order.address },
+    // Copies saved at checkout (BE24). Both null on orders from before
+    // delivery areas ("Delivery area: not recorded"); only the town is null
+    // for "Other town in this region".
+    deliveryRegionName: order.deliveryRegionName,
+    deliveryTownName: order.deliveryTownName,
   };
 }
 
@@ -175,7 +186,7 @@ async function listMyOrders(userId, page) {
     const order = byId.get(id);
     const itemViews = order.items.map(toItemView);
     return {
-      id: order.id,
+      id: order.publicId,
       orderNumber: order.orderNumber,
       placedAt: order.createdAt,
       status: order.status,
@@ -190,18 +201,35 @@ async function listMyOrders(userId, page) {
 }
 
 /*
- * getMyOrder(userId, orderId)
- * Receives: the logged-in user's id and an order id from the URL.
+ * findOrderId(publicId, ownerId)
+ * Receives: an order's public id from the URL (already checked to be a UUID,
+ *           or null if it wasn't one), and the owner's user id (or null for
+ *           admin routes, which may open any order).
+ * Returns: the order's internal id (the counting number, which the rest of
+ *          the code uses for joins, locks and updates), or null when there's
+ *          no such order, or it belongs to someone else. Callers answer 404
+ *          "Order not found." for null, so nobody can tell which it was.
+ */
+async function findOrderId(publicId, ownerId) {
+  if (!publicId) return null;
+  const where = ownerId ? { publicId, userId: ownerId } : { publicId };
+  const order = await Order.findOne({ where, attributes: ['id'] });
+  return order ? order.id : null;
+}
+
+/*
+ * getMyOrder(userId, publicId)
+ * Receives: the logged-in user's id and an order's public id from the URL.
  * Returns: the order details (the confirmation view plus id, status history
  *          and refunds), or null if it doesn't exist OR belongs to someone
  *          else. Both cases look the same to the caller (404), so nobody can
  *          probe which order ids exist.
  */
-async function getMyOrder(userId, orderId) {
-  const order = await loadOrderDetails({ id: orderId, userId });
+async function getMyOrder(userId, publicId) {
+  if (!publicId) return null;
+  const order = await loadOrderDetails({ publicId, userId });
   if (!order) return null;
   return {
-    id: order.id,
     ...toConfirmationView(order),
     canCancel: order.status === 'Pending',
     // For shoppers: what changed and when, but not which staff member did it.
@@ -229,6 +257,7 @@ module.exports = {
   getConfirmationEmailData,
   listMyOrders,
   getMyOrder,
+  findOrderId,
   // Shared with adminOrder.service.js:
   loadOrderDetails,
   toItemView,

@@ -16,6 +16,9 @@ const { dashboardQuery, thresholdBody } = require('../validators/admin.validator
 const { adminProductsQuery, createProductBody, updateProductBody } = require('../validators/adminProduct.validators');
 const { productIdParams } = require('../validators/catalog.validators');
 const {
+  regionParams, updateRegionBody, createTownBody, townParams, updateTownBody,
+} = require('../validators/delivery.validators');
+const {
   adminReviewsQuery, moderationReasonBody, unhideBody, reviewIdParams,
 } = require('../validators/review.validators');
 
@@ -31,6 +34,13 @@ router.get('/products', validate({ query: adminProductsQuery }), controller.list
 router.get('/products/:id', validate({ params: productIdParams }), controller.getProduct);
 router.post('/products', validate({ body: createProductBody }), controller.createProduct);
 router.patch('/products/:id', validate({ params: productIdParams, body: updateProductBody }), controller.updateProduct);
+
+// Delivery areas (BE24): fees, towns, hide/show. No deletes, and regions
+// aren't added or renamed (the seeder creates Ghana's 16 regions).
+router.get('/delivery-areas', controller.listDeliveryAreas);
+router.patch('/delivery-regions/:id', validate({ params: regionParams, body: updateRegionBody }), controller.updateDeliveryRegion);
+router.post('/delivery-towns', validate({ body: createTownBody }), controller.createDeliveryTown);
+router.patch('/delivery-towns/:id', validate({ params: townParams, body: updateTownBody }), controller.updateDeliveryTown);
 
 router.get('/orders', validate({ query: adminOrdersQuery }), controller.listOrders);
 router.get('/orders/:id', validate({ params: orderIdParams }), controller.getOrder);

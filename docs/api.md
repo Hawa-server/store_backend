@@ -121,6 +121,22 @@ Every error response has this shape:
 
 The exact status used by each endpoint is listed with that endpoint.
 
+### Order ids (UUIDs)
+
+*(BE26)* Every order has a random public id, a **UUID** such as `3f2a9c1e-7b4d-4e8a-9f01-6c2d5e8b7a43`. It's the order's **`id`** in every response (My Orders, order details, the confirmation page, checkout verify, the admin's lists and details, the dashboard), and the **`:id`** in every order address:
+
+```text
+GET   /api/orders/:id                 POST /api/orders/:id/cancel
+GET   /api/admin/orders/:id           PATCH /api/admin/orders/:id/status
+POST  /api/admin/orders/:id/refunds   POST /api/admin/orders/:id/refunds/:refundId/retry
+```
+
+- Treat it as an **opaque string**: build links with it as it is (e.g. `/orders/${order.id}`), and don't parse it or sort by it (sort by `placedAt`).
+- The database's counting number is **never** sent, so order addresses can't be guessed and don't reveal how many orders the store has.
+- Anything that isn't a valid order UUID in an order address, **including an old number such as `9`**, gets the same **404 `NOT_FOUND` "Order not found."** as an order that doesn't exist (never a 400). Show "Order not found" with a link to My Orders. Old links like `/orders/9` from earlier test emails therefore show "Order not found".
+- `orderNumber` (e.g. `ORD-20261012-K8W82Y`) is still what people read and quote; it's a date plus random letters, so it reveals nothing either.
+- Other ids (products, cart items, reviews, refunds, delivery areas) are unchanged numbers.
+
 ### Pagination format
 
 Paginated lists return:
@@ -279,10 +295,20 @@ The frontend route `/verify-email` should read `token` from the query string and
 **200 OK**
 
 ```json
-{ "message": "Your email is verified. You can now log in." }
+{
+  "message": "Your email is verified. You can now log in.",
+  "linked": { "ordersLinked": 2, "cartItemsAdded": 3, "cartItemsReduced": 0 }
+}
 ```
 
 After this, send the user to the login page.
+
+**`linked`** *(BE25)*: now that the email is proven, anything this person did **as a guest with the same email** is moved into the account:
+- `ordersLinked`: guest orders (paid while logged out with this email) that now appear in **My Orders**: with their status history and tracking emails, **Cancel** while Pending, and **reviews** once Delivered.
+- `cartItemsAdded`: cart lines added to the account's cart from the guest cart(s) they **paid** from (on any browser).
+- `cartItemsReduced`: of those, lines that couldn't move in full: the quantity was capped by stock, or the product is no longer available (and was left out).
+
+All three are `0` when nothing was found (the usual case). For example, show "We found 2 earlier orders and added them to your account." when `ordersLinked > 0`. No email is sent about it.
 
 **Errors**
 
@@ -358,9 +384,12 @@ In production the cookie is `Secure; SameSite=None`.
     "email": "ama.mensah@example.com",
     "isAdmin": false,
     "createdAt": "2026-09-29T15:56:39.000Z"
-  }
+  },
+  "linked": { "ordersLinked": 0, "cartItemsAdded": 0, "cartItemsReduced": 0 }
 }
 ```
+
+**`linked`** *(BE25)*: the same as in `POST /api/auth/verify`. Every login also links any **guest orders placed since** with this account's email (for example, the shopper bought something while logged out). Usually all zeros. With login codes on, it comes in the `verify-code` response instead (the login only completes there). If linking ever fails, the login still succeeds (with zeros) and it's tried again at the next login.
 
 **Errors**
 
@@ -414,8 +443,13 @@ The second login step, used only when login codes are on. It checks the 6-digit 
 **200 OK:** the same as a direct login. It sets the `token` cookie, clears the `loginChallenge` cookie, and clears the `guestCart` cookie after a successful merge.
 
 ```json
-{ "user": { "id": 2, "name": "Ama Mensah", "email": "ama.mensah@example.com", "isAdmin": false, "createdAt": "2026-09-29T15:56:39.000Z" } }
+{
+  "user": { "id": 2, "name": "Ama Mensah", "email": "ama.mensah@example.com", "isAdmin": false, "createdAt": "2026-09-29T15:56:39.000Z" },
+  "linked": { "ordersLinked": 0, "cartItemsAdded": 0, "cartItemsReduced": 0 }
+}
 ```
+
+(`linked`: see `POST /api/auth/login`.)
 
 **Code rules:** a code expires after **10 minutes** and works **once**. After **5 wrong tries** it's cancelled. Requesting a new code cancels the old one.
 
@@ -470,6 +504,11 @@ Emails a new login code. The old code stops working, and the `loginChallenge` co
 Logs out by clearing the login cookie, the `guestCart` cookie, and any unfinished `loginChallenge` cookie. It always succeeds, even if the user wasn't logged in.
 
 After logout, `GET /api/cart` returns an empty cart, so reset the cart badge to 0. The account cart isn't deleted: it's still saved and comes back at the next login.
+
+**Ask before logging out (frontend).** The endpoint logs out straight away; it can't ask the user anything. So when the user clicks **Log out**, first show a confirmation, e.g. *"Log out of your account?"* with **Log out** and **Cancel** buttons. Call this endpoint only if they confirm. On **Cancel**, do nothing. Then, after a successful logout:
+1. clear the stored user;
+2. reset the cart badge to 0;
+3. go to the home page (or the login page).
 
 - **Login required:** no
 - **Admin required:** no
@@ -702,7 +741,7 @@ Each product currently has one image, so `images` has one entry. The list suppor
 Shoppers can review products **they have received**. Reviews show on the product page with a star summary.
 
 **The rules:**
-- **Who can review:** a logged-in shopper who has a **Delivered** order **in their account** containing the product. Orders placed as a guest don't count.
+- **Who can review:** a logged-in shopper who has a **Delivered** order **in their account** containing the product. Guest orders count once they're linked to the account (same email, after verification: BE25).
 - **One review per product per person.** It can be edited or deleted later.
 - **Rating** 1–5 (whole stars), plus optional **text** of up to 1,000 characters.
 - **Hidden reviews:** reviews hidden by the store (admin moderation, BE19) never appear in lists and never count in averages.
@@ -1010,6 +1049,55 @@ Removes one cart line. `:id` is the **line** ID.
 | 400 | `INVALID_REQUEST` | `:id` isn't a positive whole number |
 | 404 | `NOT_FOUND` | `"Cart item not found."` The line doesn't exist, isn't in your cart, or was already removed |
 
+### Delivery areas
+
+*(BE24)* The delivery fee depends on **where the order is going**. The store ships from **Kumasi**, so nearer places cost less. Fees are set **per region**, and a town inside a region may have **its own fee**:
+
+1. The shopper chooses one of Ghana's **16 regions**, then a **town** from that region's list, or **"Other town in this region"**.
+2. **The fee is the town's own fee if it has one; otherwise the region's fee.** For example, Ashanti is GH₵ 15 but Kumasi (local delivery) is GH₵ 10: an order to Obuasi pays GH₵ 15, an order to Kumasi GH₵ 10.
+
+**The server always works out the fee.** The frontend only sends which region and town were chosen (`POST /api/checkout`); a fee sent by the browser is ignored.
+
+#### `GET /api/delivery-areas`
+
+The regions and towns a shopper can choose, with each one's fee. Hidden regions and towns aren't listed.
+
+- **Login required:** no (guests check out too)
+- **Admin required:** no
+- **Caching:** `Cache-Control: public, max-age=300` (the browser may reuse it for 5 minutes). Checkout works the fee out again on the server, so a slightly old list can never change what's charged.
+
+**200 OK**
+
+```json
+{
+  "regions": [
+    {
+      "id": 1, "name": "Ashanti", "feeGhs": 1500, "feeUsd": 97,
+      "towns": [
+        { "id": 1, "name": "Kumasi", "feeGhs": 1000, "feeUsd": 65 },
+        { "id": 2, "name": "Obuasi", "feeGhs": 1500, "feeUsd": 97 }
+      ]
+    },
+    {
+      "id": 6, "name": "Greater Accra", "feeGhs": 2000, "feeUsd": 129,
+      "towns": [
+        { "id": 7, "name": "Accra", "feeGhs": 2000, "feeUsd": 129 },
+        { "id": 8, "name": "Tema", "feeGhs": 2000, "feeUsd": 129 }
+      ]
+    }
+  ]
+}
+```
+
+(Shortened: the real list has all 16 regions.)
+
+- Regions come in the store's order (Ashanti first, as the store is in Kumasi); towns are A–Z.
+- `feeGhs` is in **pesewas** and is the fee that **applies**: a town without its own fee shows its region's fee. `feeUsd` is US cents, display only.
+- **For the checkout form:** a region dropdown, then a town dropdown with that region's `towns` **plus an "Other town in this region" option** (send `deliveryTownId: null`, and the region's `feeGhs` applies). Show the fee next to each choice, and update the order total as the shopper chooses. Keep the street / house / landmark in the `address` field.
+- The starting fees are examples set by the seeder; the store owner changes them in the admin.
+
+**Errors:** none expected (500 only if the server has a problem).
+
 ### Checkout
 
 Checkout turns the current cart into a **Paystack mobile-money payment** in GHS. It works for guests and logged-in shoppers. The server calculates every amount from the cart, and any amount sent by the frontend is ignored.
@@ -1018,7 +1106,7 @@ Checkout turns the current cart into a **Paystack mobile-money payment** in GHS.
 
 **Payment flow for the frontend:**
 
-1. `POST /api/checkout` with the delivery details. You get back a `reference`, an `accessCode` and an `authorizationUrl`.
+1. `POST /api/checkout` with the delivery details, including the region and town chosen from `GET /api/delivery-areas`. You get back a `reference`, an `accessCode` and an `authorizationUrl`.
 2. **Main way:** open Paystack's popup (Paystack's InlineJS) with the `accessCode`. **Backup:** redirect the browser to `authorizationUrl`.
 3. **If Paystack redirects** instead of using the popup, the shopper comes back to `{CLIENT_URL}/checkout/complete?reference=<reference>`. Paystack adds `reference` (and also `trxref`) to the address.
 4. Either way, the frontend then calls `POST /api/checkout/verify` with the `reference` (below).
@@ -1039,12 +1127,18 @@ If a payment fails or is abandoned, just call `POST /api/checkout` again with th
 | `name` | string | Required, 1–100 characters |
 | `email` | string | Required, a valid email (stored lowercase). The receipt and Paystack emails go here |
 | `phone` | string | Required, a Ghana number: `0XXXXXXXXX` or `+233XXXXXXXXX` (spaces and dashes are allowed). Stored as `0XXXXXXXXX` |
-| `address` | string | Required, 5–500 characters |
+| `address` | string | Required, 5–500 characters. The street, house number or landmark |
+| `deliveryRegionId` | number | **Required** *(BE24)*. A region `id` from `GET /api/delivery-areas` |
+| `deliveryTownId` | number or `null` | Optional *(BE24)*. A town `id` **from that region**. Leave it out or send `null` for **"Other town in this region"** (the region's fee applies) |
 
-Any other fields (for example `total`) are ignored. For logged-in users, pre-fill `name` and `email` from `GET /api/auth/me`; the shopper can still change them.
+Any other fields (for example `total` or `deliveryFee`) are ignored: the server works out the delivery fee from the region and town. For logged-in users, pre-fill `name` and `email` from `GET /api/auth/me`; the shopper can still change them.
 
 ```json
-{ "name": "Ama Mensah", "email": "ama@example.com", "phone": "0241234567", "address": "12 Oxford Street, Osu, Accra" }
+{
+  "name": "Ama Mensah", "email": "ama@example.com", "phone": "0241234567",
+  "address": "House 12, Adum, near the post office",
+  "deliveryRegionId": 1, "deliveryTownId": 1
+}
 ```
 
 **201 Created**
@@ -1055,20 +1149,25 @@ Any other fields (for example `total`) are ignored. For logged-in users, pre-fil
     "reference": "STORE-muntz37d-3cac4c5999ce",
     "accessCode": "3e1j3wq2poc6lzi",
     "authorizationUrl": "https://checkout.paystack.com/3e1j3wq2poc6lzi",
+    "deliveryRegionName": "Ashanti",
+    "deliveryTownName": "Kumasi",
     "subtotalGhs": 20500,
-    "deliveryFeeGhs": 2000,
-    "totalGhs": 22500,
+    "deliveryFeeGhs": 1000,
+    "totalGhs": 21500,
     "currency": "GHS",
     "subtotalUsd": 1322,
-    "deliveryFeeUsd": 129,
-    "totalUsd": 1451,
+    "deliveryFeeUsd": 65,
+    "totalUsd": 1387,
     "usdRate": 15.5,
-    "chargeNote": "You will be charged GHS 225.00. USD amounts are an estimate for display only."
+    "chargeNote": "You will be charged GHS 215.00. USD amounts are an estimate for display only."
   }
 }
 ```
 
-(Example cart: Black Canvas Tote Bag × 1 (12000 → 774) and Makeup Setting Spray × 1 (8500 → 548).)
+(Example cart: Black Canvas Tote Bag × 1 (12000 → 774) and Makeup Setting Spray × 1 (8500 → 548), delivered to Kumasi, Ashanti (1000 → 65).)
+
+- `deliveryRegionName` and `deliveryTownName` say where it's going; `deliveryTownName` is `null` for "Other town in this region". Show "Delivery to: Kumasi, Ashanti" (or "Delivery to: Ashanti (other town)") on the payment page.
+- **The fee is fixed when the checkout starts.** If the store changes a fee before the payment is confirmed, this checkout and its order keep the fee shown here, which is exactly what Paystack charges.
 
 - **GHS is the currency charged.** The `…Ghs` amounts are pesewas: `totalGhs = subtotalGhs + deliveryFeeGhs`, and `totalGhs` is exactly what Paystack charges.
 - The `…Usd` amounts are US cents, **display only**: `totalUsd = subtotalUsd + deliveryFeeUsd`, and `subtotalUsd` equals the cart's `subtotalUsd`.
@@ -1080,6 +1179,8 @@ Any other fields (for example `total`) are ignored. For logged-in users, pre-fil
 |---|---|---|
 | 400 | `INVALID_REQUEST` | Validation failed (see `fields`) |
 | 400 | `INVALID_REQUEST` | `"Your cart is empty."` |
+| 400 | `INVALID_REQUEST` | `fields.deliveryRegionId`: `"Choose a delivery region."` The region is missing, unknown, or **hidden** by the store. Reload the delivery areas |
+| 400 | `INVALID_REQUEST` | `fields.deliveryTownId`: `"Choose a town in <region>, or "Other town in this region"."` The town is unknown, hidden, or **belongs to a different region** |
 | 409 | `OUT_OF_STOCK` | `"Only X of <product> available. Please update your cart."`, `"<product> is out of stock. Please remove it from your cart."`, or `"<product> is no longer available. Please remove it from your cart."` Send the shopper back to the cart |
 | 429 | `RATE_LIMITED` | Too many checkouts from this IP |
 | 502 | `PAYMENT_FAILED` | `"We couldn't start the payment. Please try again."` Paystack couldn't be reached or refused the request. Nothing was charged, and the cart is unchanged |
@@ -1111,6 +1212,7 @@ It's safe to call **as many times as you like**: once the order exists, every ca
 ```json
 {
   "order": {
+    "id": "5d748ff1-708b-4bbf-858f-f7fd5b9dadea",
     "orderNumber": "ORD-20260930-DF96W8",
     "confirmationToken": "9f2c…(64 hex characters)",
     "status": "Pending",
@@ -1170,7 +1272,7 @@ For the four "try again" failures (`declined`, `not_completed`, `reversed`, `clo
 - **Admin required:** no
 - **Query:** `page` (optional, default 1)
 
-Only orders placed **while logged in** to this account appear. Orders placed as a guest aren't linked to an account, even with the same email.
+The orders that **belong to this account**: those placed while logged in, plus **guest orders paid with the account's email**, which are linked automatically once the email is verified, and at every login after that *(BE25)*. Linked orders work like any other: status history, tracking emails, **Cancel** while Pending, and reviews once Delivered.
 
 **Example:** `GET /api/orders?page=1`
 
@@ -1180,7 +1282,7 @@ Only orders placed **while logged in** to this account appear. Orders placed as 
 {
   "items": [
     {
-      "id": 11,
+      "id": "3f2a9c1e-7b4d-4e8a-9f01-6c2d5e8b7a43",
       "orderNumber": "ORD-20260930-3R6FTE",
       "placedAt": "2026-09-30T14:05:12.000Z",
       "status": "Pending",
@@ -1225,7 +1327,7 @@ One of **your own** orders, with its status history and refunds.
 ```json
 {
   "order": {
-    "id": 11,
+    "id": "3f2a9c1e-7b4d-4e8a-9f01-6c2d5e8b7a43",
     "orderNumber": "ORD-20260930-3R6FTE",
     "status": "Pending",
     "placedAt": "2026-09-30T14:05:12.000Z",
@@ -1240,6 +1342,8 @@ One of **your own** orders, with its status history and refunds.
     "paymentMethod": "mobile_money",
     "email": "ama@example.com",
     "delivery": { "name": "Ama Mensah", "phone": "0241234567", "address": "12 Oxford Street, Osu, Accra" },
+    "deliveryRegionName": "Greater Accra",
+    "deliveryTownName": "Accra",
     "statusHistory": [
       { "fromStatus": null, "toStatus": "Pending", "changedAt": "2026-09-30T14:05:12.000Z" }
     ],
@@ -1262,9 +1366,8 @@ One of **your own** orders, with its status history and refunds.
 
 | Status | Code | When |
 |---|---|---|
-| 400 | `INVALID_REQUEST` | `id` isn't a positive whole number |
 | 401 | `UNAUTHENTICATED` | Not logged in |
-| 404 | `NOT_FOUND` | `"Order not found."` The order doesn't exist, **or belongs to someone else**. Both give the same answer |
+| 404 | `NOT_FOUND` | `"Order not found."` The order doesn't exist, **or belongs to someone else**, or `:id` isn't an order UUID (e.g. an old number like `9`). All give the same answer |
 
 #### `POST /api/orders/:id/cancel`
 
@@ -1282,7 +1385,7 @@ Cancels one of **your own** orders while it's still **`Pending`** (not shipped y
 ```json
 {
   "order": {
-    "id": 11,
+    "id": "3f2a9c1e-7b4d-4e8a-9f01-6c2d5e8b7a43",
     "orderNumber": "ORD-20260930-3R6FTE",
     "status": "Cancelled",
     "canCancel": false,
@@ -1310,10 +1413,9 @@ The refund `status` may be `failed` if the payment provider refused it. The orde
 
 | Status | Code | Message / when |
 |---|---|---|
-| 400 | `INVALID_REQUEST` | `id` isn't a positive whole number |
 | 401 | `UNAUTHENTICATED` | Not logged in |
 | 403 | `FORBIDDEN` | The `X-Requested-With` header is missing |
-| 404 | `NOT_FOUND` | `"Order not found."` It doesn't exist, **or it isn't yours** |
+| 404 | `NOT_FOUND` | `"Order not found."` It doesn't exist, **or it isn't yours**, or `:id` isn't an order UUID |
 | 409 | `CONFLICT` | `"This order has already shipped, so it can't be cancelled."` It's `Shipped` or `Delivered`, for example because the store shipped it just before you pressed Cancel. Reload the order |
 
 **For the frontend:**
@@ -1337,6 +1439,7 @@ Loads one order for the **order confirmation page**. The frontend page address i
 ```json
 {
   "order": {
+    "id": "5d748ff1-708b-4bbf-858f-f7fd5b9dadea",
     "orderNumber": "ORD-20260930-PRN6Q2",
     "status": "Pending",
     "placedAt": "2026-09-30T18:44:21.000Z",
@@ -1356,7 +1459,9 @@ Loads one order for the **order confirmation page**. The frontend page address i
     "currency": "GHS",
     "paymentMethod": "mobile_money",
     "email": "ama@example.com",
-    "delivery": { "name": "Ama Mensah", "phone": "0241234567", "address": "12 Oxford Street, Osu, Accra" }
+    "delivery": { "name": "Ama Mensah", "phone": "0241234567", "address": "12 Oxford Street, Osu, Accra" },
+    "deliveryRegionName": "Greater Accra",
+    "deliveryTownName": "Accra"
   }
 }
 ```
@@ -1367,6 +1472,11 @@ Loads one order for the **order confirmation page**. The frontend page address i
 - `status` is one of `Pending`, `Shipped`, `Delivered`, `Cancelled`.
 - `paymentMethod` is always `mobile_money`; show it as "Mobile money".
 - All money is in pesewas.
+- **Delivery area** *(BE24)*: `deliveryRegionName` and `deliveryTownName` are where it was sent, saved when the shopper paid (they stay the same even if the store later renames or hides the area, or changes its fee). `deliveryFeeGhs` is the fee that was **charged**. Show:
+  - both set: "Delivery to: Accra, Greater Accra";
+  - only the region (town `null`): "Delivery to: Greater Accra (other town)";
+  - both `null`: an order from **before delivery areas**: "Delivery area: not recorded".
+- The same two fields are in `GET /api/orders/:id` and the admin's `GET /api/admin/orders/:id`.
 
 **Errors**
 
@@ -1406,7 +1516,7 @@ The admin home page: sales, refunds, recent orders, things needing attention, an
   "sales": { "revenueGhs": 339000, "orderCount": 4, "averageOrderValueGhs": 84750 },
   "refunds": { "refundedInPeriodGhs": 112000, "failedRefunds": 0 },
   "recentOrders": [
-    { "id": 53, "orderNumber": "ORD-20261001-85SK9Q", "placedAt": "2026-10-01T10:14:49.000Z", "customerName": "Toffick Agyeman", "totalGhs": 38000, "status": "Cancelled" }
+    { "id": "9b1e6f0a-2c3d-4e5f-8a7b-1c2d3e4f5a6b", "orderNumber": "ORD-20261001-85SK9Q", "placedAt": "2026-10-01T10:14:49.000Z", "customerName": "Toffick Agyeman", "totalGhs": 38000, "status": "Cancelled" }
   ],
   "counts": { "pendingOrders": 3, "hiddenReviews": 0 },
   "stock": {
@@ -1428,7 +1538,7 @@ The admin home page: sales, refunds, recent orders, things needing attention, an
 | `sales.averageOrderValueGhs` | `revenue ÷ orderCount`, rounded to the nearest pesewa, or `null` with no orders (show "—") |
 | `refunds.refundedInPeriodGhs` | Money refunded (requested or processed) **during** the period, by refund date. It includes automatic "paid but sold out" refunds |
 | `refunds.failedRefunds` | Refunds that are `failed` **right now**, whatever the period. They need attention: find them in the order details and **Retry** them |
-| `recentOrders` | The 5 newest orders, whatever the period. Link each to the admin order page using `id` |
+| `recentOrders` | The 5 newest orders, whatever the period. Link each to the admin order page using `id` (the order's UUID) |
 | `counts.pendingOrders` | Orders waiting to be shipped, right now |
 | `counts.hiddenReviews` | Reviews currently hidden, right now |
 | `stock.lowStock` | Active products with **1 to `lowStockThreshold`** left, fewest first |
@@ -1649,6 +1759,141 @@ Edits a product. Send **only the fields that change**, at least one of: `name`, 
 
 Show the message, put `currentStock` into the stock field, and let the admin check and save again.
 
+#### `GET /api/admin/delivery-areas`
+
+*(BE24)* Every delivery region and town, **including hidden ones**, with their **raw** fees, for the admin's delivery fees screen.
+
+- **Login required:** yes
+- **Admin required:** yes
+- The response has `Cache-Control: no-store`.
+
+**200 OK**
+
+```json
+{
+  "regions": [
+    {
+      "id": 1,
+      "name": "Ashanti",
+      "feePesewas": 1500,
+      "sortOrder": 1,
+      "isActive": true,
+      "updatedAt": "2026-10-12T09:00:00.000Z",
+      "towns": [
+        { "id": 3, "regionId": 1, "name": "Ejisu", "feePesewas": null, "effectiveFeePesewas": 1500, "isActive": false, "updatedAt": "2026-10-12T10:00:00.000Z" },
+        { "id": 1, "regionId": 1, "name": "Kumasi", "feePesewas": 1000, "effectiveFeePesewas": 1000, "isActive": true, "updatedAt": "2026-10-12T09:00:00.000Z" },
+        { "id": 2, "regionId": 1, "name": "Obuasi", "feePesewas": null, "effectiveFeePesewas": 1500, "isActive": true, "updatedAt": "2026-10-12T09:00:00.000Z" }
+      ]
+    }
+  ]
+}
+```
+
+- All 16 regions, by `sortOrder`; towns A–Z.
+- Fees are whole **pesewas**. A town's `feePesewas: null` means it **uses the region's fee**; `effectiveFeePesewas` is the fee that actually applies (show it as "GH₵ 15.00 (region fee)").
+- `isActive: false` = hidden from checkout (show it greyed out with a **Show** button).
+
+**Errors:** 401 not logged in; 403 not an admin.
+
+#### `PATCH /api/admin/delivery-regions/:id`
+
+*(BE24)* Changes a region's fee, or hides / shows the region. Regions can't be added, renamed or deleted (Ghana's 16 regions are fixed and come from the seeder).
+
+- **Login required:** yes
+- **Admin required:** yes
+- **Headers:** `X-Requested-With: XMLHttpRequest`, `Content-Type: application/json`
+
+**Request body:** at least one of:
+
+| Field | Type | Rules |
+|---|---|---|
+| `feePesewas` | number | A whole number from **0 to 100000** (GH₵ 0–1,000). 0 = free delivery |
+| `isActive` | boolean | `false` hides the region (and so all its towns) from checkout; `true` shows it again |
+
+```json
+{ "feePesewas": 1800 }
+```
+
+**200 OK:** `{ "region": { … } }`, in the same shape as one region of `GET /api/admin/delivery-areas` (with its towns).
+
+**What a change affects:** only **new** checkouts. Orders (and checkouts already started) keep the fee and area they were charged, including in their emails and refunds. Towns without their own fee follow the new region fee straight away.
+
+**Errors**
+
+| Status | Code | Message / when |
+|---|---|---|
+| 400 | `INVALID_REQUEST` | `fields.feePesewas` "Enter a fee from 0 to 100000 pesewas (GH₵ 0–1,000)." or "The fee must be a whole number of pesewas."; `fields._` "Send at least one field to change." |
+| 401 | `UNAUTHENTICATED` | Not logged in |
+| 403 | `FORBIDDEN` | Not an admin, or the `X-Requested-With` header is missing |
+| 404 | `NOT_FOUND` | `"Delivery region not found."` |
+| 409 | `CONFLICT` | `"This is the only active region. Show another region before hiding this one."` Checkout must always have at least one region |
+
+#### `POST /api/admin/delivery-towns`
+
+*(BE24)* Adds a town to a region.
+
+- **Login required:** yes
+- **Admin required:** yes
+- **Headers:** `X-Requested-With: XMLHttpRequest`, `Content-Type: application/json`
+
+**Request body**
+
+| Field | Type | Rules |
+|---|---|---|
+| `regionId` | number | Required. A region `id` (a hidden region is allowed; the town appears when the region is shown) |
+| `name` | string | Required, 2–80 characters (spaces at the ends are removed). Must be new **in that region**, ignoring case |
+| `feePesewas` | number or `null` | Optional. A whole number from 0 to 100000, or `null` / left out = **use the region's fee** |
+
+```json
+{ "regionId": 1, "name": "Ejisu", "feePesewas": null }
+```
+
+**201 Created:** `{ "town": { "id": 19, "regionId": 1, "name": "Ejisu", "feePesewas": null, "effectiveFeePesewas": 1500, "isActive": true, "updatedAt": "…" } }`
+
+**Errors**
+
+| Status | Code | Message / when |
+|---|---|---|
+| 400 | `INVALID_REQUEST` | `fields.name` "Enter the town name (2–80 characters)."; `fields.feePesewas` (as above); `fields.regionId` "Choose a region." (missing, or no such region) |
+| 401 | `UNAUTHENTICATED` | Not logged in |
+| 403 | `FORBIDDEN` | Not an admin, or the `X-Requested-With` header is missing |
+| 409 | `CONFLICT` | `fields.name`: `"This region already has a town called "Ejisu"."` ("ejisu" counts as the same name). The same name in a **different** region is fine |
+
+#### `PATCH /api/admin/delivery-towns/:id`
+
+*(BE24)* Renames a town, changes its fee, or hides / shows it. Send at least one field.
+
+- **Login required:** yes
+- **Admin required:** yes
+- **Headers:** `X-Requested-With: XMLHttpRequest`, `Content-Type: application/json`
+
+| Field | Type | Rules |
+|---|---|---|
+| `name` | string | 2–80 characters, new in its region |
+| `feePesewas` | number or `null` | 0–100000, or **`null` to go back to the region's fee** |
+| `isActive` | boolean | `false` hides the town from checkout; `true` shows it again |
+
+```json
+{ "feePesewas": 1200 }
+```
+```json
+{ "isActive": false }
+```
+
+**200 OK:** `{ "town": { … } }` (the same shape as in `POST`).
+
+**There's no delete.** Orders point at towns, so a town is **hidden** instead. Hidden towns disappear from checkout but past orders still show them (orders keep a copy of the name, so renaming a town doesn't change old orders either).
+
+**Errors**
+
+| Status | Code | Message / when |
+|---|---|---|
+| 400 | `INVALID_REQUEST` | Any validation error from `POST`; `fields._` "Send at least one field to change." |
+| 401 | `UNAUTHENTICATED` | Not logged in |
+| 403 | `FORBIDDEN` | Not an admin, or the `X-Requested-With` header is missing |
+| 404 | `NOT_FOUND` | `"Delivery town not found."` |
+| 409 | `CONFLICT` | `fields.name`: the region already has a town with that name |
+
 #### `GET /api/admin/orders`
 
 All orders, **newest first**, **20 per page**, with optional filters.
@@ -1675,7 +1920,7 @@ Both dates are **included**: `from=2026-09-01&to=2026-09-30` means all of Septem
 {
   "items": [
     {
-      "id": 11,
+      "id": "3f2a9c1e-7b4d-4e8a-9f01-6c2d5e8b7a43",
       "orderNumber": "ORD-20260930-3R6FTE",
       "placedAt": "2026-09-30T14:05:12.000Z",
       "customer": { "name": "Ama Mensah", "email": "ama@example.com", "userId": 2, "isGuest": false },
@@ -1692,7 +1937,7 @@ Both dates are **included**: `from=2026-09-01&to=2026-09-30` means all of Septem
 }
 ```
 
-- `customer` holds the name and email given **at checkout**. `isGuest` is `true` (with `userId: null`) for orders placed without logging in.
+- `customer` holds the name and email given **at checkout**. `isGuest` is `true` (with `userId: null`) for orders placed without logging in that **aren't linked** to an account. A guest order linked later (BE25: same email, verified) has the account's `userId` and `isGuest: false`; its details show `linkedAt`.
 - `refundStatus` is **calculated** from the order's refunds each time:
   - `none`: nothing refunded;
   - `partial`: some refunded;
@@ -1720,12 +1965,15 @@ Everything staff need to handle one order.
 ```json
 {
   "order": {
-    "id": 11,
+    "id": "3f2a9c1e-7b4d-4e8a-9f01-6c2d5e8b7a43",
     "orderNumber": "ORD-20260930-3R6FTE",
     "placedAt": "2026-09-30T14:05:12.000Z",
     "status": "Pending",
     "customer": { "name": "Ama Mensah", "email": "ama@example.com", "phone": "0241234567", "userId": 2, "isGuest": false },
+    "linkedAt": null,
     "deliveryAddress": "12 Oxford Street, Osu, Accra",
+    "deliveryRegionName": "Greater Accra",
+    "deliveryTownName": "Accra",
     "items": [
       { "productId": 31, "name": "Silver Pocket Mirror", "unitPriceGhs": 6000, "quantity": 1, "lineTotalGhs": 6000, "image": { "url": "https://ik.imagekit.io/ADORN/ADORN/Products/Accessories/pocket-mirror-1.jpg", "altText": "Silver compact pocket mirror" } }
     ],
@@ -1758,6 +2006,8 @@ Everything staff need to handle one order.
 ```
 
 - `paymentReference` is the Paystack reference; search for it in the Paystack dashboard.
+- `linkedAt` *(BE25)*: `null`, unless the order was **placed as a guest** and later linked to this account (same email, verified). Then show "Placed as a guest, linked to this account on 14 Oct 2026" (Ghana time). `customer.isGuest` is `false` once linked, because the order now belongs to an account.
+- `deliveryRegionName` / `deliveryTownName`: where to send it (town `null` = "other town in this region"; both `null` = an order from before delivery areas: "Delivery area: not recorded"). `deliveryFeeGhs` is what was charged.
 - `statusHistory[].changedBy` is `null` for changes made by the system, such as the order being placed.
 - `refunds[].providerReference` is Paystack's refund id (once accepted).
 - `failureReason` explains a `failed` refund.
@@ -1768,10 +2018,9 @@ Everything staff need to handle one order.
 
 | Status | Code | When |
 |---|---|---|
-| 400 | `INVALID_REQUEST` | `id` isn't a positive whole number |
 | 401 | `UNAUTHENTICATED` | Not logged in |
 | 403 | `FORBIDDEN` | Not an admin |
-| 404 | `NOT_FOUND` | `"Order not found."` |
+| 404 | `NOT_FOUND` | `"Order not found."` No such order, or `:id` isn't an order UUID (e.g. an old number like `9`) |
 
 #### `PATCH /api/admin/orders/:id/status`
 
@@ -1806,7 +2055,7 @@ Nothing else is allowed: no going backwards, no skipping a step (`Pending → De
 ```json
 {
   "order": {
-    "id": 11,
+    "id": "3f2a9c1e-7b4d-4e8a-9f01-6c2d5e8b7a43",
     "orderNumber": "ORD-20260930-3R6FTE",
     "status": "Shipped",
     "statusHistory": [
@@ -1820,17 +2069,17 @@ Nothing else is allowed: no going backwards, no skipping a step (`Pending → De
 
 **The emails** are sent after the change is saved. If an email fails, the change still stands; the failure is only logged. Each email links to the order:
 
-- shoppers with an account: their order in My Orders, `{CLIENT_URL}/orders/<id>`, which never expires;
+- shoppers with an account: their order in My Orders, `{CLIENT_URL}/orders/<order UUID>` (BE26), which never expires;
 - guests: the confirmation page, `{CLIENT_URL}/order/confirmation/<token>`, which works for 30 days after the order.
 
 **Errors**
 
 | Status | Code | Message / when |
 |---|---|---|
-| 400 | `INVALID_REQUEST` | `"Status must be Shipped, Delivered or Cancelled."` (in `fields.status`), or a bad `id` |
+| 400 | `INVALID_REQUEST` | `"Status must be Shipped, Delivered or Cancelled."` (in `fields.status`) |
 | 401 | `UNAUTHENTICATED` | Not logged in |
 | 403 | `FORBIDDEN` | Not an admin, or the `X-Requested-With` header is missing |
-| 404 | `NOT_FOUND` | `"Order not found."` |
+| 404 | `NOT_FOUND` | `"Order not found."` No such order, or `:id` isn't an order UUID (e.g. an old number like `9`) |
 | 409 | `CONFLICT` | `"This order can't be changed from Delivered to Shipped."` The change isn't allowed from the order's **current** status |
 | 409 | `CONFLICT` | `"This order is already Shipped."` (or `"…already Cancelled."`). For example, a double click, or another admin got there first. Nothing changed and no second email was sent; reload the order |
 | 409 | `CONFLICT` | `"This order has already shipped, so it can't be cancelled."` Cancelling a `Shipped` or `Delivered` order |
@@ -1867,7 +2116,7 @@ Gives money back to the shopper, in full or in part, through Paystack, to the mo
 
 ```json
 {
-  "order": { "id": 11, "totalGhs": 8000, "refundStatus": "partial", "refundedGhs": 5000, "refunds": [ "…" ], "…": "the full admin order view" },
+  "order": { "id": "3f2a9c1e-7b4d-4e8a-9f01-6c2d5e8b7a43", "totalGhs": 8000, "refundStatus": "partial", "refundedGhs": 5000, "refunds": [ "…" ], "…": "the full admin order view" },
   "refund": {
     "id": 21,
     "amountGhs": 5000,
@@ -1892,7 +2141,7 @@ Gives money back to the shopper, in full or in part, through Paystack, to the mo
 | 400 | `INVALID_REQUEST` | `fields.amount`: `"You can refund at most GHS 50.00."` The partial amount is more than what's left |
 | 401 | `UNAUTHENTICATED` | Not logged in |
 | 403 | `FORBIDDEN` | Not an admin, or the `X-Requested-With` header is missing |
-| 404 | `NOT_FOUND` | `"Order not found."` |
+| 404 | `NOT_FOUND` | `"Order not found."` No such order, or `:id` isn't an order UUID (e.g. an old number like `9`) |
 | 409 | `CONFLICT` | `"This order has already been refunded in full."` Nothing is left to refund |
 
 #### `POST /api/admin/orders/:id/refunds/:refundId/retry`
@@ -1914,7 +2163,7 @@ Tries a **failed** refund again.
 
 | Status | Code | Message / when |
 |---|---|---|
-| 400 | `INVALID_REQUEST` | `id` or `refundId` isn't a positive whole number |
+| 400 | `INVALID_REQUEST` | `refundId` isn't a positive whole number |
 | 401 | `UNAUTHENTICATED` | Not logged in |
 | 403 | `FORBIDDEN` | Not an admin, or the `X-Requested-With` header is missing |
 | 404 | `NOT_FOUND` | `"Order not found."` or `"Refund not found."` (including a refund that belongs to a different order) |

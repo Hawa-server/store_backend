@@ -33,13 +33,17 @@ const calendarDate = (label) =>
 // GET /api/orders?page=
 const myOrdersQuery = z.object({ page });
 
-// GET /api/orders/:id and /api/admin/orders/:id
-const orderIdParams = z.object({
-  id: z.coerce
-    .number({ error: 'Order id must be a number.' })
-    .int({ error: 'Order id must be a whole number.' })
-    .positive({ error: 'Order id must be a positive number.' }),
-});
+// GET /api/orders/:id, POST /api/orders/:id/cancel and the /api/admin/orders/:id
+// routes. Since BE26 :id is the order's public id, a UUID such as
+// "3f2a9c1e-7b4d-4e8a-9f01-6c2d5e8b7a43", never the database's counting number.
+// Anything that isn't a UUID (an old number like "9", "abc"...) becomes null
+// instead of failing here: the lookup then finds nothing and the answer is the
+// same 404 "Order not found." as for a missing order. A 400 "must be a UUID"
+// would hint at what real ids look like.
+const orderPublicId = z
+  .string()
+  .transform((value) => (z.uuid().safeParse(value.trim()).success ? value.trim().toLowerCase() : null));
+const orderIdParams = z.object({ id: orderPublicId });
 
 // GET /api/admin/orders?status=&from=&to=&page=
 // from/to are days in Ghana time, both included. 'YYYY-MM-DD' strings compare
@@ -65,4 +69,4 @@ const statusChangeBody = z.object({
   status: z.enum(['Shipped', 'Delivered', 'Cancelled'], { error: 'Status must be Shipped, Delivered or Cancelled.' }),
 });
 
-module.exports = { confirmationToken, myOrdersQuery, orderIdParams, adminOrdersQuery, statusChangeBody };
+module.exports = { confirmationToken, myOrdersQuery, orderIdParams, orderPublicId, adminOrdersQuery, statusChangeBody };

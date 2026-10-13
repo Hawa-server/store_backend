@@ -118,6 +118,8 @@ module.exports = {
       // 2. The order itself.
       await queryInterface.bulkInsert('Orders', [
         {
+          // bulkInsert skips the model's defaults, so the public id (BE26) is set here.
+          publicId: crypto.randomUUID(),
           orderNumber: order.orderNumber,
           userId: userIdByEmail[order.email],
           email: order.email,

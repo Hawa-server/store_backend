@@ -3,6 +3,8 @@
  *
  * The business rules for accounts: registering, verifying an email address,
  * resending the verification link, and logging in.
+ * After verification and at every login, guest orders and carts with the
+ * same email are linked to the account (BE25, services/account/guestLink.service.js).
  *
  * Controllers call these functions and turn the results into HTTP responses.
  * Nothing here knows about req/res, which keeps the rules easy to read and test.
@@ -27,6 +29,8 @@ const emailService = require('../email/email.service');
 // module is one clear dependency of login.
 const cartService = require('../cart/cart.service');
 const loginCodeService = require('./loginCode.service');
+// Used as guestLink.linkGuestActivitySafely(...) so tests can replace it.
+const guestLink = require('../account/guestLink.service');
 const verificationEmail = require('../email/templates/verification');
 const loginAlertEmail = require('../email/templates/loginAlert');
 
@@ -124,11 +128,14 @@ async function register({ name, email, password }) {
 /*
  * verifyEmail(rawToken)
  * Receives: the raw token from the verification link.
- * Returns: { message }. Throws 400 INVALID_REQUEST if the token is unknown,
- *          already used, or expired (with a message saying which).
+ * Returns: { message, linked }. linked = { ordersLinked, cartItemsAdded,
+ *          cartItemsReduced }: the guest orders and cart lines with this
+ *          email that were moved into the account (BE25), all 0 if none.
+ * Throws 400 INVALID_REQUEST if the token is unknown, already used, or
+ * expired (with a message saying which).
  */
 async function verifyEmail(rawToken) {
-  return sequelize.transaction(async (transaction) => {
+  const userId = await sequelize.transaction(async (transaction) => {
     // Lock the token row so two clicks at the same moment can't both use it.
     const token = await EmailToken.findOne({
       where: { tokenHash: hashToken(rawToken), type: 'verify' },
@@ -149,9 +156,14 @@ async function verifyEmail(rawToken) {
       { emailVerifiedAt: now },
       { where: { id: token.userId, emailVerifiedAt: null }, transaction }
     );
-
-    return { message: 'Your email is verified. You can now log in.' };
+    return token.userId;
   });
+
+  // The email is now PROVEN (committed above), so guest orders and carts with
+  // it can safely be linked. Done after the commit, and never able to fail
+  // the verification (see linkGuestActivitySafely).
+  const linked = await guestLink.linkGuestActivitySafely(userId);
+  return { message: 'Your email is verified. You can now log in.', linked };
 }
 
 /*
@@ -247,10 +259,11 @@ async function login({ email, password, userAgent, guestToken }) {
  * login token, send the login alert. With login codes on (BE12), it's called
  * only after the correct code, so the cart merge also waits for the code.
  * Receives: the User row, the User-Agent header, and the guest cart token (or null).
- * Returns: { token, expiresAt, user, cartMergeFailed } where token is the
- *          signed JWT for the cookie, expiresAt its expiry Date, user the safe
- *          user fields, and cartMergeFailed true if the guest cart couldn't be
- *          merged (the controller then keeps the guest cookie).
+ * Returns: { token, expiresAt, user, cartMergeFailed, linked } where token
+ *          is the signed JWT for the cookie, expiresAt its expiry Date, user
+ *          the safe user fields, cartMergeFailed true if the guest cart
+ *          couldn't be merged (the controller then keeps the guest cookie),
+ *          and linked the guest orders/cart lines linked now (BE25).
  */
 async function completeLogin(user, { userAgent, guestToken }) {
   // Move the guest cart's items into the account cart. A cart problem must
@@ -273,6 +286,12 @@ async function completeLogin(user, { userAgent, guestToken }) {
   );
   const expiresAt = new Date(jwt.decode(token).exp * 1000);
 
+  // BE25: guest orders (and paid-from guest carts, on any browser) with this
+  // account's email. Runs at EVERY login, to catch guest orders placed since
+  // the last one. Only verified accounts get here, and a failure never stops
+  // the login (it's logged and retried next time).
+  const linked = await guestLink.linkGuestActivitySafely(user.id);
+
   // Login alert: sent in the background, not awaited, so a slow or failing
   // email server never delays or breaks the login. Failures are logged.
   emailService.sendEmailSafely(
@@ -287,7 +306,7 @@ async function completeLogin(user, { userAgent, guestToken }) {
     'login alert'
   );
 
-  return { token, expiresAt, user: toSafeUser(user), cartMergeFailed };
+  return { token, expiresAt, user: toSafeUser(user), cartMergeFailed, linked };
 }
 
 module.exports = { register, verifyEmail, resendVerification, login, completeLogin, toSafeUser };

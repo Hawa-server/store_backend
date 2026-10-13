@@ -1189,7 +1189,7 @@ PATCH /api/admin/orders/40/status  { "status": "Shipped" }
 - **Locking the order row.** Two admins clicking "Shipped" at the same moment: without a lock, both could read `Pending`, both pass the check, and the shopper gets two emails and two history rows. With `SELECT … FOR UPDATE`, the second click waits, then sees `Shipped` and gets 409 "This order is already Shipped." The test sends three clicks at once: one 200, two 409s, one email, one history row.
 - **History in the same transaction.** The status change and its `OrderStatusChange` row commit together, so a status can never change without a record of who changed it and when.
 - **Email after commit, never blocking.** The email goes out only once the change is saved, and in the background. If the mail server fails, the order is still Shipped; the failure is only logged. Emailing first and then failing to save would tell the shopper something that isn't true.
-- **The right link for each shopper.** Account holders get `/orders/<id>` (My Orders), which never expires. Guests have no account, so they get the confirmation page link, which works for 30 days. Only account holders are invited to review, because reviews need an account (BE18).
+- **The right link for each shopper.** Account holders get `/orders/<id>` (My Orders), which never expires. *(Since BE26 the `<id>` is the order's UUID.)* Guests have no account, so they get the confirmation page link, which works for 30 days. Only account holders are invited to review, because reviews need an account (BE18).
 - **400 vs 409.** 400 means the request itself is wrong (`"shipped"`, `"Cancelled"` for now). 409 means the request is fine, but the order is in the wrong state for it.
 
 ---
@@ -1365,7 +1365,7 @@ GET /api/products/33/reviews?sort=highest
 
 ### Key concepts
 
-- **Eligibility comes from orders.** "Can review" means a `Delivered` order **in your account** containing the product. A Pending order isn't enough (you haven't received it), and guest orders aren't linked to any account. The tests check all three.
+- **Eligibility comes from orders.** "Can review" means a `Delivered` order **in your account** containing the product. A Pending order isn't enough (you haven't received it), and guest orders didn't count at the time. The tests check all three. *(Since BE25, guest orders paid with the account's email are linked to it after verification, and then count like any other order.)*
 - **Avoiding N+1 queries.** "Verified purchase" is needed for every review on the page. Asking once per review would be 5 extra queries per page, and more on bigger pages. Instead, one query asks "which of these reviewers bought this product?" and returns a set. The test counts the database queries: the same number for a page of 1 review as for a page of 5.
 - **The database as a backstop.** The service checks "already reviewed?" first, for a friendly 409. If two submits arrive at the same moment, both pass that check, but the UNIQUE (userId, productId) rule lets only one row in, and the other gets the same 409.
 - **Hidden means gone from every number.** Hidden reviews are left out of the list, the average, the count and the breakdown, and of the product cards (`getRatingStats`), so moderation (BE19) really removes a review's effect. The reviewer still sees their own review, with `isHidden: true`. Editing never un-hides it: `isHidden` simply isn't one of the fields an edit can change.
@@ -1668,3 +1668,263 @@ The frontend is deployed on Vercel, and its `vercel.json` rewrites `/api/*` to t
 Rate limits are counted per IP, so Express must find the shopper's real IP. Vercel's docs say it **overwrites** `X-Forwarded-For` with the client's public IP, ignoring anything the browser sent. Render's proxy then **appends** the address it received the request from (Vercel's). So the header arrives as `"<shopper IP>, <Vercel IP>"`. `app.set('trust proxy', 2)` tells Express to trust exactly those two hops, and `req.ip` becomes the shopper's IP. With `1`, it would be Vercel's IP for everyone, and every shopper would share one login limit.
 
 Trusting more hops than really exist is a risk: an extra hop means trusting a value the client can write. That's why the setting is a number per deployment, not "trust everything". Requests that skip Vercel and call `onrender.com` directly can still set their own header (a known limit, noted in the README).
+
+## BE24 — Delivery Fees by Region and Town (extra task)
+
+### What was built and why
+
+Before BE24, every order paid one **flat** delivery fee (the `deliveryFee` setting, GH₵ 20). After the presentation, the teacher's feedback was that delivery should cost more the further it goes. The store ships from **Kumasi**, so now the fee depends on **where the order is going**: Kumasi GH₵ 10, the rest of Ashanti GH₵ 15, Accra GH₵ 20, Tamale GH₵ 50, and so on. The task is described in [docs/BE24-delivery-zones.md](BE24-delivery-zones.md). It's an extra task, like BE23.
+
+How the fee works:
+
+1. The shopper picks one of Ghana's **16 regions**, then a **town** from that region's list, or **"Other town in this region"**.
+2. **Fee = the town's own fee if it has one, otherwise the region's fee.** Obuasi has no fee of its own, so it pays Ashanti's GH₵ 15; Kumasi has its own GH₵ 10.
+
+The browser only sends **which** region and town; the **server** works out the fee, the same rule as product prices since BE7.
+
+### New endpoints
+
+| Method and path | Who | What it does |
+|---|---|---|
+| `GET /api/delivery-areas` | Public | Active regions with their active towns and each one's fee (GHS and USD) |
+| `GET /api/admin/delivery-areas` | Admin | Every region and town, hidden ones too, with raw fees |
+| `PATCH /api/admin/delivery-regions/:id` | Admin | Change a region's fee, hide or show it |
+| `POST /api/admin/delivery-towns` | Admin | Add a town (with its own fee, or `null` = the region's fee) |
+| `PATCH /api/admin/delivery-towns/:id` | Admin | Rename a town, change its fee (`null` = back to the region's), hide or show it |
+
+**Changed:** `POST /api/checkout` now **requires** `deliveryRegionId` (and optionally `deliveryTownId`), and returns the area names. Order responses (shopper, guest confirmation, admin) gain `deliveryRegionName` and `deliveryTownName`.
+
+### New tables and how they relate
+
+```text
+DeliveryRegions (16 rows)            DeliveryTowns
+  id, name UNIQUE,                     id, regionId ──► DeliveryRegions.id (RESTRICT)
+  feePesewas, sortOrder, isActive      name, feePesewas NULL (= use region's), isActive
+                                       UNIQUE (regionId, name)
+
+Checkouts and Orders (new, all nullable):
+  deliveryRegionId ──► DeliveryRegions.id   deliveryRegionName  (copy of the name)
+  deliveryTownId   ──► DeliveryTowns.id     deliveryTownName    (copy of the name)
+```
+
+One region **has many** towns. A checkout (and later its order) **belongs to** one region and, unless "Other town" was chosen, one town. `deliveryFee`, which already existed on both tables, still holds the amount charged.
+
+### New or changed files
+
+| File | Purpose |
+|---|---|
+| `migrations/20261012000001-create-delivery-areas.js` | **New.** The two tables and the UNIQUE (regionId, name) index |
+| `migrations/20261012000002-delivery-area-on-checkouts-orders.js` | **New.** The 4 columns on Checkouts and Orders, with named foreign keys (so "down" can remove them) |
+| `models/DeliveryRegion.js`, `models/DeliveryTown.js` | **New** models; `Checkout.js` and `Order.js` get the 4 fields |
+| `seeders/20261012000001-delivery-areas.js` | **New.** The 16 regions and 18 towns with starting fees; skips anything that already exists, so it's safe to run twice |
+| `services/delivery/delivery.service.js` | **New.** The public list, and `resolveDeliveryArea`: checks the choice and works out the fee |
+| `services/delivery/adminDelivery.service.js` | **New.** Admin list, region and town changes |
+| `validators/delivery.validators.js` | **New.** Fees 0–100,000 pesewas, town names 2–80 characters, at least one field per edit |
+| `controllers/delivery.controller.js`, `routes/delivery.routes.js` | **New.** The public endpoint (mounted in `app.js`) |
+| `controllers/admin.controller.js`, `routes/admin.routes.js` | The four admin routes |
+| `validators/checkout.validators.js`, `services/checkout/checkout.service.js` | The region and town in the body; the fee from the area instead of the setting |
+| `services/order/fulfilment.service.js` | Copies the area from the checkout to the order |
+| `services/order/order.service.js`, `adminOrder.service.js` | The area names in order responses |
+| `services/email/templates/orderConfirmation.js` | "Delivery to: Kumasi, Ashanti — GHS 10.00" |
+| `services/settings/settings.service.js` | `deliveryFee` marked as no longer used by checkout (kept in the table) |
+| `scripts/seed-production.js` | Can run **one** seeder: `npm run seed:production -- <file>` |
+
+### How a request flows (a checkout to Kumasi)
+
+```text
+POST /api/checkout  { name, email, phone, address, deliveryRegionId: 1, deliveryTownId: 1 }
+  → checkoutLimiter → optionalAuth → validate (region id required; any fee in the body dropped)
+  → checkout.controller.startCheckout
+  → checkout.service.startCheckout
+      priceCart                    subtotal from current product prices
+      resolveDeliveryArea(1, 1)    region 1 active? town 1 active AND in region 1?
+                                   fee = Kumasi's own 1000 (else Ashanti's 1500)
+      transaction: INSERT Checkouts (deliveryFee 1000, region/town ids AND names) + CheckoutItems
+      COMMIT, then Paystack initialize (outside the transaction)
+  ← 201 { checkout: { deliveryRegionName: "Ashanti", deliveryTownName: "Kumasi", deliveryFeeGhs: 1000, … } }
+
+…payment confirmed (verify or webhook) → fulfilment copies deliveryFee, ids and names
+from the CHECKOUT to the new order → confirmation email "Delivery to: Kumasi, Ashanti — GHS 10.00"
+```
+
+### Key concepts
+
+- **Snapshots, again.** The fee is worked out **once**, when the checkout starts, and saved on the checkout. The order copies that number, so it can't change afterwards. The test changed Kumasi's fee to 1800 between checkout and payment: the order still charged 1000, its email said GHS 10.00, and a later cancellation refunded the full total paid (with the 1000 fee). This is the same idea as product prices in `OrderItems`.
+- **Why copy the names?** A town can be renamed or hidden later. The order keeps `deliveryRegionName` / `deliveryTownName` as they were, so old orders always show where they actually went. The ids are kept too, for the database's own links.
+- **Never trust the choice blindly.** `resolveDeliveryArea` checks that the region is active, and that the town is active **and belongs to that region**. Otherwise a shopper could send Greater Accra with Kumasi's town id to pay Kumasi's cheaper fee. A fee sent by the browser never reaches the code (Zod drops unknown fields).
+- **Hide, don't delete.** Checkouts and orders point at regions and towns with `RESTRICT` foreign keys, so they're hidden with `isActive: false` (as with products in BE23). Hidden areas vanish from `GET /api/delivery-areas` and checkout refuses them, but old orders keep showing them.
+- **At least one region.** Hiding the **last** active region would make checkout impossible, so it's a 409. To make that safe when two admins act at once, the service **locks all region rows** (in id order, so two requests can't deadlock) before counting.
+- **Unique town names, twice.** The service checks first (409 with `fields.name`), and the UNIQUE (regionId, name) index catches two admins adding the same town at the same instant (also turned into the 409; the test ran 4 at once: one 201, three 409s). The same name in two different regions is fine.
+- **`null` vs `0`.** A town fee of `null` means "use the region's fee"; `0` means free delivery. The code checks `!== null` and `!== undefined`, never "truthy", so 0 and `false` aren't mistaken for "not sent".
+- **Old orders.** Orders placed before BE24 have no area (all `null`); they keep their flat GH₵ 20 and show "Delivery area: not recorded". The demo orders from the sample-data seeder are like this, which is a handy example.
+- **Cacheable list.** `GET /api/delivery-areas` sends `Cache-Control: public, max-age=300`: it's the same for everyone and rarely changes. That's safe because checkout always recalculates the fee on the server.
+- **Seeding only what's new.** sequelize-cli **doesn't remember** which seeders ran, so `db:seed:all` would run every seeder again: in production, the products seeder would fail on the unique names. `npm run seed:production -- 20261012000001-delivery-areas.js` passes the name to sequelize-cli's `--seed` option, so only that seeder runs. It skips areas that already exist, so running it twice is harmless.
+
+### Check it yourself in MySQL Workbench
+
+```sql
+-- Every area with the fee that applies (town fee, else region fee), in GH₵
+SELECT r.name AS region, t.name AS town,
+       COALESCE(t.feePesewas, r.feePesewas) / 100 AS fee_ghs, r.isActive, t.isActive
+FROM DeliveryRegions r LEFT JOIN DeliveryTowns t ON t.regionId = r.id
+ORDER BY r.sortOrder, t.name;
+
+-- Recent orders and where they went (NULL = before BE24)
+SELECT orderNumber, deliveryRegionName, deliveryTownName, deliveryFee / 100 AS fee_ghs, total / 100 AS total_ghs
+FROM Orders ORDER BY id DESC LIMIT 10;
+```
+
+## BE25 — Link Guest Orders and Carts to a New Account (extra task)
+
+### What was built and why
+
+Teacher's feedback: someone who **pays as a guest** and later **creates an account with the same email** should find their guest orders in **My Orders**, and what was left in that guest cart in their **account cart**, even if it was on another phone. The task is described in [docs/BE25-link-guest-orders.md](BE25-link-guest-orders.md). It replaces the plan's "out of scope" line about linking guest orders.
+
+**The safety rule:** link only to **verified** accounts. An order holds a name, phone number and address, so it must never go to someone who merely *typed* an email at sign-up. Verification proves the person owns the inbox, and that inbox already received each guest order's confirmation email (with its private link), so linking gives them nothing they couldn't already open.
+
+It runs:
+- right after `POST /api/auth/verify` succeeds;
+- at **every login** (to catch guest orders placed later, while logged out).
+
+### Endpoints
+
+No new endpoints. **Changed responses:** `POST /api/auth/verify` → `{ message, linked }`; login and `verify-code` → `{ user, linked }`, where `linked = { ordersLinked, cartItemsAdded, cartItemsReduced }`. Admin order details gain `linkedAt`.
+
+### Tables
+
+No new tables. **Orders** gains `linkedAt` (when a guest order was linked). Two new indexes: **Orders (email, userId)** and **Checkouts (email, status)**. Linking sets `Orders.userId`, the same link that orders placed while logged in already use:
+
+```text
+Users ─┬─< Orders            (userId: set at checkout when logged in, OR by linking later)
+       └─ Carts (account)    ◄── merged from guest Carts found through paid Checkouts.cartId
+```
+
+### New or changed files
+
+| File | Purpose |
+|---|---|
+| `migrations/20261014000001-guest-linking.js` | **New.** `Orders.linkedAt`, the two indexes, and a one-time clean-up of email case/spaces |
+| `services/account/guestLink.service.js` | **New.** `linkGuestActivity(userId)` and `linkGuestActivitySafely(userId)` |
+| `services/cart/cart.service.js` | The merge step moved into `mergeCartsIntoAccount` (now shared by the BE6 login merge and linking); it also counts reduced lines |
+| `services/auth/auth.service.js`, `controllers/auth.controller.js` | Call linking after verification and in `completeLogin`; return `linked` |
+| `services/order/adminOrder.service.js` | `linkedAt` in admin order details |
+| `models/Order.js` | `linkedAt` |
+
+### How a request flows (verification)
+
+```text
+POST /api/auth/verify  { token }
+  → csrfCheck → validate → auth.controller.verify → auth.service.verifyEmail
+      transaction: lock the token row, mark it used, set Users.emailVerifiedAt → COMMIT
+      linkGuestActivitySafely(userId)          (AFTER the commit: the email is now proven)
+        load user → verified? (no → all zeros)
+        transaction (retried once on a deadlock):
+          1. SELECT cartId FROM Checkouts WHERE email = ? AND status = 'paid'
+             lock those guest carts (id order) → account cart → products (id order)
+             merge: add quantities, cap by stock and 99, skip unavailable, delete guest carts
+          2. UPDATE Orders SET userId = ?, linkedAt = NOW() WHERE email = ? AND userId IS NULL
+        COMMIT
+        (any error → logged, all zeros: verification still succeeds)
+  ← 200 { message, linked: { ordersLinked: 2, cartItemsAdded: 2, cartItemsReduced: 1 } }
+```
+
+### Key concepts
+
+- **Proof before trust.** Typing an email proves nothing; clicking the link sent to it does. That's why nothing is linked at registration, and an unverified account can't log in anyway. The test checks that nothing moves before verification.
+- **Why carts are found through PAID checkouts.** A guest cart belongs to a browser cookie, not an email. The only proof that a guest cart was used with this email is a **payment** from it (`Checkouts.cartId` with `status = 'paid'`). A checkout that was started but never paid proves nothing (anyone can type any email), so its cart is left alone. After paying, fulfilment (BE9) removed what was bought, so what's left in the cart is exactly the "leftovers".
+- **Reusing the BE6 merge.** The merge rules (add quantities, cap by stock and 99, drop unavailable products, delete the guest cart) were moved into one helper, `mergeCartsIntoAccount`, used by both the normal login merge and linking. One set of rules, one place to fix.
+- **Lock order.** Every transaction that touches carts locks in the same order: **carts → products**, and orders come last. Payments (fulfilment) and the login merge use the same order, so two of them can't each hold what the other needs (a deadlock). If MySQL still reports one, `withDeadlockRetry` runs the whole transaction again.
+- **Idempotent by its WHERE.** `UPDATE … WHERE email = ? AND userId IS NULL` only matches orders nobody owns yet. Running it twice, or four times at once, links each order exactly once (the test ran 4 at the same moment: 3 + 0 + 0 + 0). It can never take an order that belongs to **another** account.
+- **Failure isolation.** Linking is a bonus, so `linkGuestActivitySafely` catches any error, logs it (user id and counts only, no emails), and returns zeros. Verification and login always succeed; the next login simply tries again. The test made linking throw on purpose and still got 200s.
+- **Indexes and functions.** The spec suggested `LOWER(TRIM(email))`, but MySQL can't use an index on a column wrapped in a function: it would read, and under the transaction lock, *every* guest order. Emails have always been stored lower-cased and trimmed (the Zod rules), the migration makes sure of it once for older rows, and the column's collation ignores case. So a plain `email = ?` matches "Ama@Test.com" and uses an index. (On a tiny table MySQL may pick the `userId` index instead; both avoid a full scan.)
+- **Everything else just follows `userId`.** My Orders, cancelling (BE16's ownership check), review eligibility (BE18's `deliveredBuyers`) and the "My Orders" link in shipped/delivered emails (BE15's `orderLink`) all use `Orders.userId`, so linked orders work everywhere without any other code change.
+
+### Check it yourself in MySQL Workbench
+
+```sql
+-- Guest orders that were linked, and when
+SELECT orderNumber, email, userId, linkedAt, status FROM Orders WHERE linkedAt IS NOT NULL ORDER BY linkedAt DESC;
+
+-- Guest orders still waiting for an account (no verified account with that email yet)
+SELECT o.orderNumber, o.email FROM Orders o
+WHERE o.userId IS NULL
+  AND NOT EXISTS (SELECT 1 FROM Users u WHERE u.email = o.email AND u.emailVerifiedAt IS NOT NULL);
+```
+
+## BE26 — Random IDs (UUIDs) for Orders (extra task)
+
+### What was built and why
+
+Order pages used the database's **counting number** in the address: `/orders/9`. Teacher's feedback: that number
+
+- **can be guessed**: anyone can try `/orders/8` (Adorn already answered "Order not found" for other people's orders, but the address invites trying), and
+- **reveals business information**: order 9 tells everyone the store has had about 9 orders.
+
+Now every order address, response and email link uses a **UUID**, e.g. `/orders/3f2a9c1e-7b4d-4e8a-9f01-6c2d5e8b7a43`. The counting number never leaves the server. The task is described in [docs/BE26-order-public-ids.md](BE26-order-public-ids.md).
+
+### What a UUID is
+
+A **UUID** (Universally Unique Identifier) is a 128-bit number written as 36 characters: 32 hexadecimal digits in groups `8-4-4-4-12`. The kind used here (version 4) is almost all **random**: 122 random bits, made by Node's built-in `crypto.randomUUID()` (a secure random generator, no extra library). There are about 5 × 10³⁶ possible values, so:
+
+- guessing someone else's order id is hopeless (unlike trying 8, 9, 10…);
+- two orders practically never get the same one (and a UNIQUE index refuses it anyway);
+- it says nothing about how many orders exist or when they were placed.
+
+### Two ids per order, and why the integer stays
+
+| Column | Used for | Seen outside the server? |
+|---|---|---|
+| `id` (1, 2, 3…) | Primary key, foreign keys and joins (`OrderItems.orderId`, `Refunds.orderId`, …) | **Never** |
+| `publicId` (UUID, new) | Every API address, response and email link | Yes, as the order's `id` |
+| `orderNumber` | What people read and say (`ORD-20261012-K8W82Y`) | Yes |
+
+Keeping the integer **inside** means no foreign key, join, seed or other table changes: one new column. Replacing every primary key with a UUID would also work, but would rewrite every related table for no extra benefit. Integers are also smaller and faster as keys.
+
+**Order numbers** were checked too: they were already a Ghana date plus 6 random letters (BE9's `utils/orderNumber.js`), so they don't reveal a count. No change needed.
+
+### New or changed files
+
+| File | Purpose |
+|---|---|
+| `migrations/20261015000001-order-public-ids.js` | **New.** Adds `publicId` (nullable), gives every existing order a UUID, then makes it NOT NULL + UNIQUE |
+| `models/Order.js` | `publicId` with `defaultValue: () => crypto.randomUUID()`, so every new order gets one automatically |
+| `seeders/20260929000005-sample-data.js` | Sets `publicId` for the demo orders (`bulkInsert` skips model defaults) |
+| `validators/order.validators.js`, `refund.validators.js` | `:id` is a UUID; anything else becomes `null` (→ 404) |
+| `services/order/order.service.js` | `findOrderId(publicId, ownerId)`: UUID → internal id; `id` in responses is the UUID |
+| `controllers/order.controller.js`, `admin.controller.js` | Turn the UUID into the internal id (or 404) before calling the services |
+| `services/order/adminOrder.service.js`, `dashboard.service.js`, `controllers/checkout.controller.js` | Send `publicId` as `id` |
+| `services/order/orderStatus.service.js` | Email links use `/orders/<publicId>` |
+
+**Tables:** `Orders` gains `publicId CHAR(36) NOT NULL UNIQUE`. No relationships change.
+
+### How a request flows (cancelling by UUID)
+
+```text
+POST /api/orders/3f2a9c1e-…/cancel
+  → csrfCheck → requireAuth → validate (UUID? yes → lower-cased; "9" or "abc" → null)
+  → order.controller.cancelMine
+      findOrderId(publicId, req.user.id)
+        SELECT id FROM Orders WHERE publicId = ? AND userId = ?   (UNIQUE index)
+        nothing? → 404 "Order not found."   (missing, someone else's, or not a UUID)
+      cancellation.service.cancelOrder({ orderId: <internal id>, ... })   ← unchanged since BE16
+  ← 200 { order: { id: "3f2a9c1e-…", status: "Cancelled", … } }
+```
+
+### Key concepts
+
+- **Public id vs internal id.** The database keeps using small integers for what it's good at (keys and joins); the outside world only ever sees the random UUID. The translation happens once, at the edge (the controller), and the services keep working with integer ids, so their transactions and row locks didn't change at all.
+- **Why 404, not 400.** A 400 "id must be a UUID" would tell a stranger what real ids look like. "9", "abc", a random UUID and someone else's order all get the **same** 404 "Order not found.", so the answer reveals nothing. The validator turns a non-UUID into `null` instead of failing, and the lookup then finds nothing.
+- **A UUID is not a password.** Hard-to-guess ids are an extra layer, not the protection itself: shopper routes still check **ownership** (`WHERE publicId = ? AND userId = ?`), and admin routes still require an admin. A leaked UUID alone opens nothing. (The guest confirmation page is different: there the 64-character `confirmationToken` *is* the key, BE11.)
+- **Three-step migration on a live table.** A NOT NULL column can't be added to a table that already has rows without a value for each. So: add it nullable, fill every row (each its own `crypto.randomUUID()`, done in JavaScript because MySQL's own `UUID()` makes time-based ids), then switch to NOT NULL and add the UNIQUE index. **Back up the production database before running it.**
+- **Defaults vs bulk inserts.** The model's `defaultValue` covers every order created through Sequelize (fulfilment). `queryInterface.bulkInsert` (the seeders) bypasses model defaults, so the demo seeder sets `publicId` itself. A fresh database (all migrations + seeders) was built and checked.
+- **The response shape didn't change.** The field is still called `id`, so frontend code like `/orders/${order.id}` keeps working; it's just a string now.
+
+### Check it yourself in MySQL Workbench
+
+```sql
+-- Every order has its own UUID (the two counts must be equal, and no NULLs)
+SELECT COUNT(*) AS orders, COUNT(DISTINCT publicId) AS unique_ids, SUM(publicId IS NULL) AS missing FROM Orders;
+
+-- The two ids side by side (only the server ever sees `id`)
+SELECT id, publicId, orderNumber FROM Orders ORDER BY id DESC LIMIT 5;
+```

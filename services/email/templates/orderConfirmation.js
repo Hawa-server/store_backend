@@ -12,6 +12,23 @@ const { formatGhanaDateTime } = require('../../../utils/dates');
 const { contactLines } = require('./storeContact');
 
 /*
+ * deliveryLine(order)
+ * Receives: the confirmation view.
+ * Returns: the delivery line of the totals, with the area it was charged for
+ *          (BE24), e.g. "Delivery to: Kumasi, Ashanti — GHS 10.00", or
+ *          "Delivery to: Ashanti (other town) — GHS 15.00". Orders from
+ *          before delivery areas have no area, so they say so.
+ */
+function deliveryLine(order) {
+  const fee = formatGhs(order.deliveryFeeGhs);
+  if (!order.deliveryRegionName) return `Delivery: ${fee} (Delivery area: not recorded)`;
+  const place = order.deliveryTownName
+    ? `${order.deliveryTownName}, ${order.deliveryRegionName}`
+    : `${order.deliveryRegionName} (other town)`;
+  return `Delivery to: ${place} — ${fee}`;
+}
+
+/*
  * orderConfirmationEmail({ order, link, linkDays })
  * Receives: the confirmation view (order.service.js toConfirmationView), the
  *           confirmation page link, and how many days the link works.
@@ -37,7 +54,7 @@ function orderConfirmationEmail({ order, link, linkDays }) {
     ),
     '',
     `Subtotal: ${formatGhs(order.subtotalGhs)}`,
-    `Delivery: ${formatGhs(order.deliveryFeeGhs)}`,
+    deliveryLine(order),
     `Total paid: ${formatGhs(order.totalGhs)} (${order.currency})`,
     `Payment method: ${payment}`,
     '',
@@ -83,7 +100,7 @@ function orderConfirmationEmail({ order, link, linkDays }) {
       </table>
       <p style="text-align:right;">
         Subtotal: ${escapeHtml(formatGhs(order.subtotalGhs))}<br>
-        Delivery: ${escapeHtml(formatGhs(order.deliveryFeeGhs))}<br>
+        ${escapeHtml(deliveryLine(order))}<br>
         <strong>Total paid: ${escapeHtml(formatGhs(order.totalGhs))} (${escapeHtml(order.currency)})</strong>
       </p>
       <p><strong>Payment method:</strong> ${escapeHtml(payment)}</p>

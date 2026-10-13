@@ -5,6 +5,7 @@
  * requireAuth + requireAdmin (see routes/admin.routes.js).
  * BE14: orders list and details. Later tasks add status changes (BE15),
  * refunds (BE17), review moderation (BE19) and the dashboard (BE20).
+ * BE23 adds products; BE24 adds delivery areas (fees and towns).
  */
 const adminOrderService = require('../services/order/adminOrder.service');
 const orderStatusService = require('../services/order/orderStatus.service');
@@ -14,7 +15,23 @@ const moderationService = require('../services/review/reviewModeration.service')
 const dashboardService = require('../services/dashboard/dashboard.service');
 const settingsService = require('../services/settings/settings.service');
 const adminProductService = require('../services/product/adminProduct.service');
+const adminDeliveryService = require('../services/delivery/adminDelivery.service');
 const AppError = require('../utils/AppError');
+const { findOrderId } = require('../services/order/order.service');
+
+/*
+ * orderIdFromUrl(req)
+ * Receives: the request; req.valid.params.id is the order's public UUID
+ *           (BE26), or null if the address didn't hold one.
+ * Returns: the order's internal id (the counting number), which the services
+ *          use for joins and locks. Throws 404 "Order not found." if there's
+ *          no such order, the same answer for "9", "abc" or an unknown UUID.
+ */
+async function orderIdFromUrl(req) {
+  const orderId = await findOrderId(req.valid.params.id, null);
+  if (!orderId) throw new AppError(404, 'NOT_FOUND', 'Order not found.');
+  return orderId;
+}
 
 /*
  * GET /api/admin/orders?status=&from=&to=&page=
@@ -31,8 +48,7 @@ async function listOrders(req, res) {
  * Returns: 200 { order } with everything staff need, or 404.
  */
 async function getOrder(req, res) {
-  const order = await adminOrderService.getOrder(req.valid.params.id);
-  if (!order) throw new AppError(404, 'NOT_FOUND', 'Order not found.');
+  const order = await adminOrderService.getOrder(await orderIdFromUrl(req));
   res.set('Cache-Control', 'no-store');
   res.json({ order });
 }
@@ -47,7 +63,7 @@ async function getOrder(req, res) {
  * 409, matching the "already Shipped" rule of the other statuses.
  */
 async function changeStatus(req, res) {
-  const { id } = req.valid.params;
+  const id = await orderIdFromUrl(req);
   if (req.valid.body.status === 'Cancelled') {
     const { alreadyCancelled } = await cancellationService.cancelOrder({ orderId: id, actorUserId: req.user.id, ownerId: null });
     if (alreadyCancelled) throw new AppError(409, 'CONFLICT', 'This order is already Cancelled.');
@@ -85,8 +101,9 @@ function toRefundView(refund) {
  *          and it can be retried.
  */
 async function issueRefund(req, res) {
-  const refund = await adminRefundService.issueRefund({ orderId: req.valid.params.id, ...req.valid.body, adminId: req.user.id });
-  const order = await adminOrderService.getOrder(req.valid.params.id);
+  const orderId = await orderIdFromUrl(req);
+  const refund = await adminRefundService.issueRefund({ orderId, ...req.valid.body, adminId: req.user.id });
+  const order = await adminOrderService.getOrder(orderId);
   res.set('Cache-Control', 'no-store');
   res.status(201).json({ order, refund: toRefundView(refund) });
 }
@@ -98,8 +115,9 @@ async function issueRefund(req, res) {
  *          again with the new reason).
  */
 async function retryRefund(req, res) {
-  const refund = await adminRefundService.retryRefund({ orderId: req.valid.params.id, refundId: req.valid.params.refundId });
-  const order = await adminOrderService.getOrder(req.valid.params.id);
+  const orderId = await orderIdFromUrl(req);
+  const refund = await adminRefundService.retryRefund({ orderId, refundId: req.valid.params.refundId });
+  const order = await adminOrderService.getOrder(orderId);
   res.set('Cache-Control', 'no-store');
   res.json({ order, refund: toRefundView(refund) });
 }
@@ -200,6 +218,45 @@ async function updateProduct(req, res) {
   res.json({ product: await adminProductService.updateProduct(req.valid.params.id, req.valid.body, req.user.id) });
 }
 
+/*
+ * GET /api/admin/delivery-areas
+ * Receives: nothing.
+ * Returns: 200 { regions }: every region and town, hidden ones too, with raw
+ *          fees (a town's null fee = it uses the region's fee).
+ */
+async function listDeliveryAreas(req, res) {
+  res.set('Cache-Control', 'no-store');
+  res.json(await adminDeliveryService.listAll());
+}
+
+/*
+ * PATCH /api/admin/delivery-regions/:id
+ * Receives: req.valid.params.id, req.valid.body = { feePesewas?, isActive? }, req.user.
+ * Returns: 200 { region } (with its towns).
+ */
+async function updateDeliveryRegion(req, res) {
+  res.json({ region: await adminDeliveryService.updateRegion(req.valid.params.id, req.valid.body, req.user.id) });
+}
+
+/*
+ * POST /api/admin/delivery-towns
+ * Receives: req.valid.body = { regionId, name, feePesewas (null = region's fee) }, req.user.
+ * Returns: 201 { town }.
+ */
+async function createDeliveryTown(req, res) {
+  res.status(201).json({ town: await adminDeliveryService.createTown(req.valid.body, req.user.id) });
+}
+
+/*
+ * PATCH /api/admin/delivery-towns/:id
+ * Receives: req.valid.params.id, req.valid.body = { name?, feePesewas? (null
+ *           allowed), isActive? }, req.user.
+ * Returns: 200 { town }.
+ */
+async function updateDeliveryTown(req, res) {
+  res.json({ town: await adminDeliveryService.updateTown(req.valid.params.id, req.valid.body, req.user.id) });
+}
+
 module.exports = {
   listProducts,
   getProduct,
@@ -216,4 +273,8 @@ module.exports = {
   hideReview,
   unhideReview,
   deleteReview,
+  listDeliveryAreas,
+  updateDeliveryRegion,
+  createDeliveryTown,
+  updateDeliveryTown,
 };

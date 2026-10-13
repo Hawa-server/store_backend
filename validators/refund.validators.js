@@ -4,6 +4,7 @@
  * Zod schemas for admin refunds (BE17).
  */
 const { z } = require('zod');
+const { orderPublicId } = require('./order.validators');
 
 const positiveId = (label) =>
   z.coerce
@@ -36,6 +37,8 @@ const issueRefundBody = z
   .transform((body) => (body.type === 'full' ? { type: body.type, reason: body.reason } : body));
 
 // POST /api/admin/orders/:id/refunds/:refundId/retry
-const refundParams = z.object({ id: positiveId('Order id'), refundId: positiveId('Refund id') });
+// :id is the order's public id (BE26, see order.validators.js); the refund id
+// stays a number (only admins use it, after opening the order by its UUID).
+const refundParams = z.object({ id: orderPublicId, refundId: positiveId('Refund id') });
 
 module.exports = { issueRefundBody, refundParams };

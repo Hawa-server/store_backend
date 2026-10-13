@@ -14,6 +14,14 @@
       "value": "1"
     },
     {
+      "key": "deliveryRegionId",
+      "value": "1"
+    },
+    {
+      "key": "deliveryTownId",
+      "value": "1"
+    },
+    {
       "key": "cartItemId",
       "value": "1"
     },
@@ -27,7 +35,7 @@
     },
     {
       "key": "orderId",
-      "value": "1"
+      "value": "paste-the-order-uuid-here"
     },
     {
       "key": "refundId",
@@ -545,6 +553,28 @@
       ]
     },
     {
+      "name": "Delivery areas",
+      "item": [
+        {
+          "name": "List delivery areas (regions, towns, fees)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/delivery-areas",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "delivery-areas"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
       "name": "Checkout",
       "description": "Start a payment, pay in the browser (test number 0551234987), then verify.",
       "item": [
@@ -575,7 +605,7 @@
             "description": "Copy checkout.reference into the reference variable and open checkout.authorizationUrl to pay.",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"Ama Mensah\",\n  \"email\": \"ama@example.com\",\n  \"phone\": \"0241234567\",\n  \"address\": \"12 Oxford Street, Osu, Accra\"\n}",
+              "raw": "{\n  \"name\": \"Ama Mensah\",\n  \"email\": \"ama@example.com\",\n  \"phone\": \"0241234567\",\n  \"address\": \"House 12, Adum, near the post office\",\n  \"deliveryRegionId\": {{deliveryRegionId}},\n  \"deliveryTownId\": {{deliveryTownId}}\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -1143,6 +1173,208 @@
             "body": {
               "mode": "raw",
               "raw": "{\n  \"value\": 5\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Delivery areas (all, with hidden)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/delivery-areas",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "delivery-areas"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Edit region fee",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Requested-With",
+                "value": "XMLHttpRequest"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/delivery-regions/{{deliveryRegionId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "delivery-regions",
+                "{{deliveryRegionId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"feePesewas\": 1500\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Add town",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Requested-With",
+                "value": "XMLHttpRequest"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/delivery-towns",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "delivery-towns"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"regionId\": {{deliveryRegionId}},\n  \"name\": \"Ejisu\",\n  \"feePesewas\": null\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Edit town fee",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Requested-With",
+                "value": "XMLHttpRequest"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/delivery-towns/{{deliveryTownId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "delivery-towns",
+                "{{deliveryTownId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"feePesewas\": 1000\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Hide town",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Requested-With",
+                "value": "XMLHttpRequest"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/delivery-towns/{{deliveryTownId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "delivery-towns",
+                "{{deliveryTownId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"isActive\": false\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Show town again",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Requested-With",
+                "value": "XMLHttpRequest"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/delivery-towns/{{deliveryTownId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "delivery-towns",
+                "{{deliveryTownId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"isActive\": true\n}",
               "options": {
                 "raw": {
                   "language": "json"

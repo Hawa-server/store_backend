@@ -23,9 +23,10 @@ const CHALLENGE_EXPIRED = 'Your login has expired. Please log in again.';
  * finishLogin(req, res, result)
  * The last HTTP step of a successful login (direct, or after the code).
  * Receives: the request, the response, and completeLogin()'s result.
- * Returns: nothing; sets the login cookie and sends 200 { user }.
+ * Returns: nothing; sets the login cookie and sends 200 { user, linked }
+ *          (linked: guest orders and cart lines linked at this login, BE25).
  */
-function finishLogin(req, res, { token, expiresAt, user, cartMergeFailed }) {
+function finishLogin(req, res, { token, expiresAt, user, cartMergeFailed, linked }) {
   setAuthCookie(res, token, expiresAt);
   clearLoginChallengeCookie(res);
 
@@ -35,7 +36,7 @@ function finishLogin(req, res, { token, expiresAt, user, cartMergeFailed }) {
   // shopper's items aren't lost.
   if (req.cookies[GUEST_CART_COOKIE] && !cartMergeFailed) clearGuestCartCookie(res);
 
-  res.json({ user });
+  res.json({ user, linked });
 }
 
 /*
@@ -51,7 +52,8 @@ async function register(req, res) {
 /*
  * POST /api/auth/verify
  * Receives: req.valid.body = { token }.
- * Returns: 200 { message }.
+ * Returns: 200 { message, linked } (linked: guest orders and cart lines
+ *          moved into the account now that the email is proven, BE25).
  */
 async function verify(req, res) {
   res.json(await authService.verifyEmail(req.valid.body.token));
@@ -69,7 +71,7 @@ async function resendVerification(req, res) {
 /*
  * POST /api/auth/login
  * Receives: req.valid.body = { email, password }, and the guest cart cookie if any.
- * Returns: - login codes OFF: 200 { user } and sets the HTTP-only login cookie.
+ * Returns: - login codes OFF: 200 { user, linked } and sets the HTTP-only login cookie.
  *            The guest cart is merged during login (authService.completeLogin).
  *          - login codes ON (BE12): 200 { requiresCode: true, message } and sets
  *            only the short-lived loginChallenge cookie. Not logged in yet.
@@ -96,7 +98,7 @@ async function login(req, res) {
  * POST /api/auth/login/verify-code
  * Receives: req.valid.body = { code }, plus the loginChallenge cookie (which
  *           says who passed the password step) and the guest cart cookie.
- * Returns: 200 { user } and sets the login cookie, exactly like a direct login.
+ * Returns: 200 { user, linked } and sets the login cookie, exactly like a direct login.
  *          The guest cart merge and login alert happen now, not before.
  */
 async function verifyCode(req, res) {

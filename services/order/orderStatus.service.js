@@ -42,7 +42,7 @@ const EMAIL_TEMPLATES = { Shipped: orderShippedEmail, Delivered: orderDeliveredE
  */
 function orderLink(order, token) {
   return order.userId
-    ? `${process.env.CLIENT_URL}/orders/${order.id}`
+    ? `${process.env.CLIENT_URL}/orders/${order.publicId}` // the UUID, never the counting number (BE26)
     : `${process.env.CLIENT_URL}/order/confirmation/${token}`;
 }
 
