@@ -134,6 +134,7 @@ GHS is charged; USD is display only. Each **unit price** is converted first and 
 |---|---|---|
 | Couldn't connect to MySQL ("user ''") | `DB_USER` was empty, and nodemon doesn't reload when `.env` changes | Check the config first; restart with `rs` |
 | Registration took about 5 seconds | We waited for the email server (Mailtrap at the time) before answering, and the delay also showed which emails had accounts | Send emails in the background, after the database work **[BE2]** |
+| Live emails never arrived | Render's free plan **blocks outgoing SMTP ports**, so Nodemailer couldn't connect from the live server (and Ethereal never delivers to real inboxes anyway) | Switched to **Brevo's HTTP API**: one HTTPS `fetch` per email, a 10-second timeout, and Brevo's error message logged (never the API key). No email library needed |
 | Last-item race | Two payments, one item | Row locks + an automatic refund **[BE9]** |
 | USD totals didn't add up | 3903 vs 3904 cents | Convert unit prices first, then multiply and add **[BE13]** |
 | Late duplicate payments | An old checkout was approved after a newer order existed | Detect and refund automatically **[BE10]** |
@@ -204,5 +205,5 @@ Answer honestly: naming your limits yourself shows understanding.
 ## 9. Demos to have ready (about 30 seconds each)
 
 1. **The last-item race:** two payments for one item → one order, one automatic refund, stock 0.
-2. **Webhook only:** pay, close the page → the order still appears, and the confirmation email is in the Ethereal inbox.
+2. **Webhook only:** pay, close the page → the order still appears, and the confirmation email arrives (check Brevo's Transactional → Logs, and the inbox or Spam).
 3. **Admin dashboard after a cancellation:** cancel a Pending order → the stock comes back, the refund is created, and the low-stock list updates.

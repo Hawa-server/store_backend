@@ -31,7 +31,7 @@ The frontend is a separate React project. **Everything the frontend needs is in 
 | Validation | Zod (every body, query and URL parameter) |
 | Security | bcryptjs (cost 12), JWT in HTTP-only cookies, helmet, CORS, express-rate-limit, a CSRF header check |
 | Payments | Paystack (test mode, mobile money): server-side verification and signed webhooks |
-| Email | Nodemailer + Ethereal (a free test SMTP service: emails are caught, never delivered) |
+| Email | Brevo's transactional email **HTTP API** (called with Node's built-in `fetch`; real emails to real inboxes) |
 | Images | ImageKit URLs |
 | Hosting | Render (API) + Aiven MySQL with SSL (database) |
 
@@ -57,7 +57,7 @@ docs/              api.md (for the frontend), backend-guide.md (study guide), ca
 
 ## Running it locally
 
-**You need:** Node.js 20 or newer, MySQL 8 (local), a free [Ethereal](https://ethereal.email) test account (click **Create Ethereal Account** and copy the SMTP details), and a [Paystack](https://paystack.com) account in **test mode**.
+**You need:** Node.js 20 or newer, MySQL 8 (local), a free [Brevo](https://www.brevo.com) account (with a verified sender and an API key, see **Emails** below), and a [Paystack](https://paystack.com) account in **test mode**.
 
 1. **Install:**
    ```bash
@@ -99,8 +99,8 @@ npx sequelize-cli db:seed:undo:all      # remove all seeded data
 | `JWT_EXPIRES_IN` | How long a login lasts (`1d`) |
 | `PAYSTACK_SECRET_KEY` | Your Paystack **test** secret key (`sk_test_…`). It's also used to check webhook signatures |
 | `IMAGEKIT_*` | Optional. Only needed for API image uploads, a stretch task that isn't built |
-| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS` | The Ethereal SMTP details: `smtp.ethereal.email`, port `587`, and your Ethereal username and password |
-| `EMAIL_FROM` | The sender shown on emails, e.g. `"Store <no-reply@store.test>"` |
+| `BREVO_API_KEY` | Your Brevo **API key** (starts with `xkeysib-`; not the SMTP key) |
+| `EMAIL_FROM_NAME`, `EMAIL_FROM_ADDRESS` | The sender shown on emails, e.g. `"Adorn"` and an address **verified in Brevo** |
 | `STORE_CONTACT_EMAIL`, `STORE_CONTACT_PHONE` | The store's contact details, shown at the bottom of order emails |
 | `LOGIN_CODE_ENABLED` | `true` = after the password, a 6-digit code is emailed (and printed in the console in development only); `false` = password only. Restart after changing it |
 | `ADMIN_EMAIL`, `ADMIN_PASSWORD` | The admin account the admin seeder creates (password at least 8 characters) |
@@ -167,7 +167,21 @@ Import [docs/postman_collection.json](docs/postman_collection.json) into Postman
 
 ### Emails
 
-All emails go to **Ethereal**, a test service that catches them instead of delivering them, so no real inbox ever gets one. To read them, log in at [ethereal.email](https://ethereal.email/login) with the `SMTP_USER` and `SMTP_PASS` from `.env`, then open **Messages**. In development, the server also prints a **preview link** for every email it sends, e.g. `[email] "Your login code" → preview: https://ethereal.email/message/…`.
+Emails are sent through **[Brevo](https://www.brevo.com)'s transactional email API**: one HTTPS request per email (`POST https://api.brevo.com/v3/smtp/email`), so they reach **real inboxes**. The free plan allows 300 emails a day.
+
+**Why an API and not SMTP:** Render's free plan blocks outgoing SMTP ports, so SMTP (Nodemailer, Ethereal, Mailtrap) can't send from the live API. HTTPS (port 443) always works. Node 22's built-in `fetch` sends the request, so no email library is needed.
+
+**Setting it up:**
+1. Create a free Brevo account.
+2. **Verify the sender:** *Senders, domains & dedicated IPs → Senders → Add a sender*, and click the link Brevo emails you. Put that address in `EMAIL_FROM_ADDRESS`.
+3. **Create an API key:** *SMTP & API → API Keys → Generate a new API key*. It starts with `xkeysib-`. (The **SMTP** key, `xsmtpsib-…`, doesn't work with the API.) Put it in `BREVO_API_KEY`, and never commit it.
+4. Set the same three values on Render (**Environment**).
+
+**Checking that an email was sent:** in Brevo, *Transactional → Logs* (or *Statistics*) lists every email, whether it was delivered, and why not. In development, the server prints `[email] "<subject>" accepted by Brevo (<message id>)`.
+
+**Spam folder:** the sender is a `@gmail.com` address and the store has no domain of its own, so Gmail and others may put the emails in **Spam** (they can't be signed for gmail.com by Brevo). Tell testers to check Spam. The proper fix later is a domain of your own, authenticated in Brevo (SPF/DKIM/DMARC).
+
+**If sending fails**, the log shows Brevo's reason, e.g. `[email] verification email failed: Brevo returned HTTP 401: unauthorized: Key not found` (wrong or deleted key) or `… 400: … sender … not valid` (sender not verified). A request that takes longer than 10 seconds is given up. If live emails fail with a 401 about an **unrecognised IP address**, turn off **Authorised IPs** in Brevo's security settings (Render's addresses change).
 
 The emails are:
 - verification;
@@ -179,7 +193,7 @@ The emails are:
 
 If an email fails, it's logged and never breaks the order or login. The one exception is the login code, where the user is asked to try again.
 
-Ethereal is free and needs no sign-up, but it's **for testing only**, and its accounts and messages don't last forever. If sending starts failing with a login error, create a new Ethereal account and update `SMTP_USER` and `SMTP_PASS` (locally and on Render). To send real emails later, only the four `SMTP_*` values and `EMAIL_FROM` need to change; no code changes.
+Only use real addresses you own (or testers who agreed): Brevo really delivers, so made-up addresses like `@example.com` just bounce.
 
 ---
 
@@ -208,7 +222,7 @@ Commit and push the project. Check first that `.env` is **not** included: `git s
    - a **new** `JWT_SECRET`, and a strong `ADMIN_PASSWORD`;
    - `CLIENT_URL` = the frontend's **Vercel** address, e.g. `https://<your-app>.vercel.app` (no slash at the end). It's used for CORS, the Paystack return page and the links in emails;
    - `TRUST_PROXY_HOPS=2` (shoppers reach the API through Vercel, then Render);
-   - the Paystack test key, the Ethereal SMTP details, the store contact details and `LOGIN_CODE_ENABLED`.
+   - the Paystack test key, `BREVO_API_KEY`, `EMAIL_FROM_NAME` and `EMAIL_FROM_ADDRESS` (delete any old `SMTP_*` and `EMAIL_FROM` variables), the store contact details and `LOGIN_CODE_ENABLED`.
 
    Don't set `PORT`; Render provides it.
 

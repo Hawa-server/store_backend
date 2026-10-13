@@ -1599,6 +1599,8 @@ A typo in the file can't put a wrong price in the shop.
 
 ### Switching the test inbox: Mailtrap → Ethereal
 
+*(Later replaced: emails now go through Brevo's HTTP API, because Render's free plan blocks SMTP. See "Email: from SMTP (Nodemailer) to Brevo's HTTP API" at the end of this guide.)*
+
 Emails are now sent to **Ethereal** (`smtp.ethereal.email`, port 587), Nodemailer's free test service. Like Mailtrap's sandbox, it accepts every email but delivers none, so no real person is ever emailed during testing. You read the emails at ethereal.email.
 
 **No code had to change to switch.** Only the `SMTP_*` settings in `.env` changed, because all sending goes through one place (`services/email/email.service.js`), which reads its server details from the environment. That's the payoff of keeping outside services behind a single module: changing provider is a configuration change, not a code change. Moving to a real email provider later works the same way.
@@ -1928,3 +1930,46 @@ SELECT COUNT(*) AS orders, COUNT(DISTINCT publicId) AS unique_ids, SUM(publicId 
 -- The two ids side by side (only the server ever sees `id`)
 SELECT id, publicId, orderNumber FROM Orders ORDER BY id DESC LIMIT 5;
 ```
+
+## Email: from SMTP (Nodemailer) to Brevo's HTTP API
+
+### What changed and why
+
+Until now, emails went out over **SMTP** with Nodemailer (first to Mailtrap, then Ethereal; see the BE22 notes above, which this replaces). Two problems:
+
+1. **Render's free plan blocks outgoing SMTP ports**, so the live API could never open an SMTP connection: emails silently failed in production.
+2. Test inboxes (Mailtrap, Ethereal) **never deliver** to real people, so a classmate who signed up never received their verification email.
+
+Now every email is **one HTTPS request** to Brevo's transactional email API, which delivers to real inboxes. HTTPS uses port 443, which is never blocked. Node 22's built-in `fetch` makes the request, so **Nodemailer was removed** (no email library at all).
+
+### The request
+
+```text
+POST https://api.brevo.com/v3/smtp/email
+api-key: <BREVO_API_KEY>            ← only ever in this header, never logged
+Content-Type: application/json
+
+{ "sender": { "name": EMAIL_FROM_NAME, "email": EMAIL_FROM_ADDRESS },
+  "to": [ { "email": "<recipient>" } ],
+  "subject": "…", "htmlContent": "…", "textContent": "…" }
+
+← 201 { "messageId": "<…@smtp-relay.mailin.fr>" }      accepted
+← 400/401 { "code": "unauthorized", "message": "Key not found" }   refused
+```
+
+### Changed files
+
+| File | Purpose |
+|---|---|
+| `services/email/email.service.js` | `sendEmail` now POSTs to Brevo with `fetch`; same signature, so **no caller changed** |
+| `.env.example` | `BREVO_API_KEY`, `EMAIL_FROM_NAME`, `EMAIL_FROM_ADDRESS` replace `SMTP_*` and `EMAIL_FROM` |
+| `package.json` | `nodemailer` removed |
+
+### Key concepts
+
+- **One door for email.** Every email in the app goes through `sendEmail` / `sendEmailSafely`. Because their signature stayed the same, switching providers touched **one file**; the templates, the "send after commit" rule and the callers didn't change. That's the payoff of keeping outside services behind a small service module.
+- **Success means 2xx.** `fetch` doesn't throw on an HTTP error: a 401 is still a "successful" request. So the code checks `response.ok` and turns anything else into an error with Brevo's own reason (`Brevo returned HTTP 401: unauthorized: Key not found`). That message goes in the logs, so a wrong key or an unverified sender is obvious.
+- **Timeouts.** `AbortSignal.timeout(10000)` cancels the request after 10 seconds, so a slow provider can't hold a request open (important for the login code, which the user is waiting for).
+- **Failures still don't break anything.** `sendEmailSafely` catches the error, logs the label and reason, and returns false: orders, registrations and logins carry on. The login code still answers 503 "try again", because without it the user can't log in.
+- **Secrets.** The API key is read from `.env`, sent only in the `api-key` header, and never put in an error message or log line (a test checks every log line). If settings are missing, the error names the **missing keys**, never any values.
+- **Real delivery has consequences.** Brevo really delivers, so only real, consenting addresses should be used for testing. A `@gmail.com` sender without a domain of its own may land in **Spam**. Brevo's *Transactional → Logs* shows whether each email was delivered, bounced or blocked.
