@@ -138,6 +138,12 @@ The delivery fee depends on the region and town the shopper chooses at checkout:
 
 A fee change only affects **new** checkouts: every order keeps the fee and area it was charged, in its emails and refunds too.
 
+### Discount codes
+
+The admin creates codes such as `ADORN10` (`/api/admin/discount-codes`): **percent** (1–90%, optionally capped) or **fixed** (GHS 1–1,000), with optional minimum order, start/end days (Ghana time), total usage limit, and **once per customer** (per email, guests too; on by default). Shoppers preview a code (`POST /api/discounts/check`) and send it with the checkout. The server decides everything: the discount comes off the **products only** (never delivery, never below 0), `total = subtotal − discount + delivery`, and Paystack charges that total. An order keeps its discount even if the code expires while the shopper pays; `timesUsed` counts paid orders and isn't given back by cancellations or refunds. Codes are never deleted, only switched off, and a used code can't change its code, type or value.
+
+**To try it on the live site:** create `ADORN10` as the admin (Postman: Admin → Create discount code), then pay a test order with it.
+
 ### Wishlist
 
 Logged-in shoppers can save up to **100 products** for later (`/api/wishlist`, see [docs/api.md](docs/api.md)). Saving twice keeps one copy; the list always shows the **current** price and stock; products removed from the shop stay in the list marked unavailable. Guests see the ♡ but are asked to log in. Deleting the account deletes its wishlist.
@@ -157,7 +163,7 @@ Someone who pays **as a guest** and later creates an account with the **same ema
 
 ### Postman
 
-Import [docs/postman_collection.json](docs/postman_collection.json) into Postman. It has every endpoint, grouped as Health, Auth, Account, Products, Cart, Wishlist, Delivery areas, Checkout, Orders, Reviews, Admin and Webhooks. The variables `deliveryRegionId` and `deliveryTownId` (both 1: Ashanti, Kumasi) are used by Checkout and the admin delivery requests.
+Import [docs/postman_collection.json](docs/postman_collection.json) into Postman. It has every endpoint, grouped as Health, Auth, Account, Products, Cart, Wishlist, Delivery areas, Discounts, Checkout, Orders, Reviews, Admin and Webhooks. The variables `deliveryRegionId` and `deliveryTownId` (both 1: Ashanti, Kumasi) are used by Checkout and the admin delivery requests.
 
 - Set the collection variable **`baseUrl`**: `http://localhost:5000` locally, or your Render address.
 - Run **Auth → Log in** first. Postman keeps the login cookie for the rest. For the Admin folder, change the `email` and `password` variables to your admin account.

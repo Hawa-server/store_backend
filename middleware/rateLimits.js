@@ -60,4 +60,6 @@ module.exports = {
   // Wishlist saves and removals (BE28), per USER (after requireAuth): plenty
   // for real use, but stops a script hammering the database.
   wishlistLimiter: createLimiter({ windowMinutes: 15, limit: 60, keyGenerator: (req) => `wishlist:${req.user.id}` }),
+  // Discount code preview (BE29): stops anyone guessing codes by trying many.
+  discountCheckLimiter: createLimiter({ windowMinutes: 15, limit: 10 }),
 };

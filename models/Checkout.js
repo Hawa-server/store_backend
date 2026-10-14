@@ -23,6 +23,11 @@ module.exports = (sequelize, DataTypes) => {
       deliveryRegionName: { type: DataTypes.STRING(80), allowNull: true },
       deliveryTownName: { type: DataTypes.STRING(80), allowNull: true },
       subtotal: { type: DataTypes.INTEGER.UNSIGNED, allowNull: false },
+      // Discount (BE29): the code used (a copy of its text, kept even if the
+      // code changes later) and the discount given, in pesewas (0 = none).
+      discountCodeId: { type: DataTypes.INTEGER, allowNull: true },
+      discountCode: { type: DataTypes.STRING(20), allowNull: true },
+      discountPesewas: { type: DataTypes.INTEGER.UNSIGNED, allowNull: false, defaultValue: 0 },
       deliveryFee: { type: DataTypes.INTEGER.UNSIGNED, allowNull: false },
       total: { type: DataTypes.INTEGER.UNSIGNED, allowNull: false },
       status: { type: DataTypes.ENUM('open', 'paid', 'failed'), allowNull: false, defaultValue: 'open' },

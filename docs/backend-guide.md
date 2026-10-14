@@ -2161,3 +2161,89 @@ SELECT w.userId, p.name, p.isActive, w.createdAt FROM WishlistItems w JOIN Produ
 -- The most-wished products
 SELECT p.name, COUNT(*) AS saves FROM WishlistItems w JOIN Products p ON p.id = w.productId GROUP BY p.id ORDER BY saves DESC LIMIT 10;
 ```
+
+## BE29 — Discount Codes (extra task)
+
+### What was built and why
+
+The admin creates codes such as `ADORN10`; shoppers type one at checkout for money off. As with prices and delivery fees, **the server decides everything**: whether the code is valid, how much it takes off, and the total Paystack charges. The task is described in [docs/BE29-discount-codes.md](BE29-discount-codes.md).
+
+### New endpoints
+
+| Method and path | Who | What it does |
+|---|---|---|
+| `POST /api/discounts/check` | Anyone | Preview a code against the current cart (reserves nothing) |
+| `GET /api/admin/discount-codes?status=&page=` | Admin | List codes with `timesUsed` and a status |
+| `GET /api/admin/discount-codes/:id` | Admin | One code with its 20 latest redemptions |
+| `POST /api/admin/discount-codes` | Admin | Create |
+| `PATCH /api/admin/discount-codes/:id` | Admin | Edit (or switch off); a used code keeps its code, type and value |
+
+**Changed:** `POST /api/checkout` accepts `discountCode` and returns `discountGhs` / `discountUsd`; order responses and the confirmation email show the discount.
+
+### New tables and how they relate
+
+```text
+DiscountCodes ──< DiscountRedemptions >── Orders          (one redemption per PAID order: orderId UNIQUE)
+     ▲                (email, discountPesewas)
+     └── Checkouts.discountCodeId, Orders.discountCodeId   (+ discountCode text copy, discountPesewas)
+```
+
+A code **has many** redemptions; each redemption **belongs to** one order. Checkouts and orders keep a **copy** of the code text and the discount given, like the delivery area names in BE24, so history never changes if the code is edited.
+
+### New or changed files
+
+| File | Purpose |
+|---|---|
+| `migrations/20261014121118-discount-codes.js` | **New.** The two tables and the three columns on Checkouts and Orders |
+| `models/DiscountCode.js`, `models/DiscountRedemption.js` | **New** models |
+| `services/discount/discount.service.js` | **New.** `calculateDiscount` (integer maths) and `checkCode` (every rule, one message each) |
+| `services/discount/discountPreview.service.js`, `controllers/discount.controller.js`, `routes/discounts.routes.js` | **New.** `POST /api/discounts/check` |
+| `services/discount/adminDiscount.service.js`, `validators/discount.validators.js` | **New.** Admin list (status filter in SQL), details, create, edit |
+| `services/checkout/checkout.service.js`, `validators/checkout.validators.js` | `discountCode` in the body; the discount in the total and the response |
+| `services/order/fulfilment.service.js` | Locks the code, records the redemption, `timesUsed + 1` |
+| `services/order/order.service.js`, `adminOrder.service.js`, `templates/orderConfirmation.js` | The discount in order views and the email |
+
+### How a request flows (checkout with a code)
+
+```text
+POST /api/checkout { …, discountCode: "adorn10", total: 1 }      (the "total" is dropped by Zod)
+  → checkout.service.startCheckout
+      priceCart → subtotal 9000 (current prices)
+      resolveDeliveryArea → fee 1000
+      discount.checkCode("adorn10", 9000, { email })
+        "ADORN10" exists & on? started? not ended? ≥ minimum? under the limit? email not used it yet?
+        percent 20 → floor(9000 × 20 / 100) = 1800 → capped at 1500
+      total = 9000 − 1500 + 1000 = 8500
+      transaction: INSERT Checkouts (discountCodeId, discountCode "ADORN10", discountPesewas 1500, total 8500) + items
+      Paystack initialize(amount: 8500)
+…payment confirmed → fulfilment, ONE transaction:
+      lock checkout, cart, products → create the order (copying the discount)
+      lock the DiscountCodes row → INSERT DiscountRedemptions → timesUsed + 1
+```
+
+### Key concepts
+
+- **Integer maths, multiply first.** `Math.floor(subtotal × percent / 100)` keeps everything in whole pesewas: 15% of 10001 = 150015 / 100 = 1500.15 → **1500**. Rounding down means the store never gives away a fraction of a pesewa, and the shopper never sees a total that doesn't add up.
+- **Products only, never below zero.** The discount comes off the subtotal; delivery is added afterwards, so `total ≥ deliveryFee` always. A fixed GHS 1,000 code on a GHS 45 cart takes off exactly GHS 45.
+- **Check twice, decide once.** The preview helps the shopper, but it reserves nothing. Checkout runs **every** rule again (including "once per customer" with the checkout's email), then **saves** the discount on the checkout. From then on, that saved number is what's charged and what the order gets.
+- **The order must match the payment.** If the code expires or hits its limit while the shopper is paying, fulfilment **still** gives the order the discount: Paystack already charged the discounted total. Refusing would mean an order that doesn't match the money. The rare cost: two shoppers paying at the same moment for the last use both get it, and `timesUsed` goes one over `usageLimit` (shown to the admin as `overLimit`).
+- **Counting under a lock.** Fulfilment locks the code's row before adding 1, so two payments can't both read the same `timesUsed` and lose a count. Admin edits lock the same row.
+- **Once per customer = once per email.** Guests have no account, so the email is the identity. Every email is stored **trimmed and lower-cased** (checkouts, orders and redemptions), so "Ama@Test.com" and "ama@test.com" are the same customer (tested). The redemption is only created for **paid** orders: starting a checkout uses nothing.
+- **Same answer for unknown and switched-off codes.** "This code isn't valid." either way, so trying codes reveals nothing. The preview is also rate-limited (10 per 15 minutes per IP) against guessing.
+- **History can't be rewritten.** A used code can't change its code, type or value: orders and redemptions describe it. Dates, limits and on/off can still change. No deletes (orders point at codes).
+- **Refunds and the dashboard needed no change**: they already use `order.total`, the amount actually paid. A full refund of a discounted order returns exactly what was paid (tested: 1000 partial + 7500 full = 8500 paid).
+- **Status from rules, filter in SQL.** A code's status (off, scheduled, expired, used up, active) isn't stored: it's worked out from its fields and the time, both in JavaScript (for each code shown) and as SQL conditions (so the list can be filtered and paged by status).
+
+### Check it yourself in MySQL Workbench
+
+```sql
+-- Codes and how often they've been used
+SELECT code, type, value, maxDiscountPesewas, usageLimit, timesUsed, isActive, startsAt, endsAt FROM DiscountCodes ORDER BY id DESC;
+
+-- Who used which code, on which order (emails are lower-case)
+SELECT d.code, r.email, r.discountPesewas, o.orderNumber, o.subtotal, o.discountPesewas, o.deliveryFee, o.total
+FROM DiscountRedemptions r JOIN DiscountCodes d ON d.id = r.discountCodeId JOIN Orders o ON o.id = r.orderId ORDER BY r.id DESC;
+
+-- Every order adds up: total = subtotal − discount + delivery (should return no rows)
+SELECT orderNumber FROM Orders WHERE total <> subtotal - discountPesewas + deliveryFee;
+```

@@ -34,6 +34,7 @@ const reviewsRoutes = require('./routes/reviews.routes');
 const deliveryRoutes = require('./routes/delivery.routes');
 const accountRoutes = require('./routes/account.routes');
 const wishlistRoutes = require('./routes/wishlist.routes');
+const discountsRoutes = require('./routes/discounts.routes');
 
 const app = express();
 
@@ -88,6 +89,7 @@ app.use('/api/categories', categoriesRoutes);
 app.use('/api/products', productsRoutes);
 app.use('/api/cart', cartRoutes);
 app.use('/api/delivery-areas', deliveryRoutes);
+app.use('/api/discounts', discountsRoutes);
 app.use('/api/checkout', checkoutRoutes);
 app.use('/api/orders', ordersRoutes);
 app.use('/api/settings', settingsRoutes);

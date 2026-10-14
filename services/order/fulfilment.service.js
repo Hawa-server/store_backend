@@ -18,7 +18,9 @@
  */
 const {
   sequelize, Sequelize, Checkout, CheckoutItem, Product, Order, OrderItem, OrderStatusChange, Cart, CartItem,
+  DiscountCode, DiscountRedemption,
 } = require('../../models');
+const { normalizeEmail } = require('../discount/discount.service');
 const AppError = require('../../utils/AppError');
 const withDeadlockRetry = require('../../utils/withDeadlockRetry');
 const { createRandomToken } = require('../../utils/tokens');
@@ -105,6 +107,10 @@ async function fulfilCheckout(checkoutId) {
           deliveryRegionName: checkout.deliveryRegionName,
           deliveryTownName: checkout.deliveryTownName,
           subtotal: checkout.subtotal,
+          // The discount saved at checkout (BE29), exactly as Paystack charged it.
+          discountCodeId: checkout.discountCodeId,
+          discountCode: checkout.discountCode,
+          discountPesewas: checkout.discountPesewas,
           deliveryFee: checkout.deliveryFee,
           total: checkout.total,
           currency: 'GHS',
@@ -140,6 +146,26 @@ async function fulfilCheckout(checkoutId) {
       //    can't go below 0 (the UNSIGNED column would refuse it anyway).
       for (const item of items) {
         await productById.get(item.productId).decrement('stock', { by: item.quantity, transaction });
+      }
+
+      // 7b. The discount code (BE29): count this PAID use. Lock the code's row
+      //     so uses are counted one at a time (two payments at once can't both
+      //     read the same timesUsed). This NEVER refuses: the shopper has
+      //     already paid the discounted total, so the order must match the
+      //     payment even if the code expired or ran out while they paid.
+      //     (timesUsed can then go slightly over usageLimit; the admin sees it.)
+      if (checkout.discountCodeId) {
+        const code = await DiscountCode.findByPk(checkout.discountCodeId, { lock, transaction });
+        await DiscountRedemption.create(
+          {
+            discountCodeId: code.id,
+            orderId: order.id, // UNIQUE: an order is never counted twice
+            email: normalizeEmail(checkout.email), // same form as "once per customer" checks
+            discountPesewas: checkout.discountPesewas,
+          },
+          { transaction }
+        );
+        await code.increment('timesUsed', { by: 1, transaction });
       }
 
       // 8. Mark the checkout paid and link it to its order (Checkouts.orderId is UNIQUE).
