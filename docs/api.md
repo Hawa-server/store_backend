@@ -108,11 +108,14 @@ Every error response has this shape:
 | Code | Usual HTTP status | Meaning |
 |---|---|---|
 | `INVALID_REQUEST` | 400, 413, 415 | Validation failed, bad JSON, body too large, or not JSON |
-| `UNAUTHENTICATED` | 401 | Not logged in, or the login has expired |
+| `UNAUTHENTICATED` | 401 | Not logged in, or the login has expired. `"Please log in again."` means the account's sessions were ended (password reset or account deleted, BE27): send the user to the login page |
+| `WRONG_PASSWORD` | 401 | *(BE27)* The current password typed to delete the account is wrong. The user is still logged in |
 | `FORBIDDEN` | 403 | Logged in but not allowed, or the `X-Requested-With` header is missing |
 | `EMAIL_NOT_VERIFIED` | 403 | Correct password, but the email address hasn't been verified yet |
 | `NOT_FOUND` | 404 | The resource or route doesn't exist (or isn't yours) |
 | `CONFLICT` | 409 | Duplicate, or the resource is in the wrong state |
+| `ORDERS_IN_PROGRESS` | 409 | *(BE27)* The account can't be deleted yet: an order is Pending or Shipped, or a payment is in progress |
+| `RESET_LINK_INVALID` | 400 | *(BE27)* The password reset link is unknown, already used, replaced by a newer one, or older than 30 minutes |
 | `OUT_OF_STOCK` | 409 | Not enough stock |
 | `RATE_LIMITED` | 429 | Too many attempts; try again later |
 | `PAYMENT_FAILED` | 402, 502 | The payment didn't succeed, or couldn't be started with Paystack (502) |
@@ -529,6 +532,78 @@ After logout, `GET /api/cart` returns an empty cart, so reset the cart badge to 
 { "message": "You have been logged out." }
 ```
 
+#### `POST /api/auth/forgot-password`
+
+*(BE27)* Step 1 of "Forgot password": emails a link to set a new password.
+
+- **Login required:** no
+- **Admin required:** no
+- **Headers:** `X-Requested-With: XMLHttpRequest`, `Content-Type: application/json`
+- **Rate limit:** 5 per hour per IP address
+
+**Request body**
+
+```json
+{ "email": "ama.mensah@example.com" }
+```
+
+**200 OK**, always the same, **whether or not an account exists** (so the form can't be used to find out who has an account):
+
+```json
+{ "message": "If an account exists for this email, we've sent a link to reset your password." }
+```
+
+- If an account exists, it gets an email with the link **`{CLIENT_URL}/reset-password?token=<64 hex characters>`**. The link works **once** and expires after **30 minutes**. Asking again sends a new link and **cancels the older one**.
+- At most **3 links per email per hour**. Extra requests still get the same 200, but no email is sent.
+- Show the message as it is, e.g. "Check your email (and Spam)".
+- In development the server also prints the link in its console.
+
+**Errors**
+
+| Status | Code | When |
+|---|---|---|
+| 400 | `INVALID_REQUEST` | `fields.email`: missing or not a valid email |
+| 429 | `RATE_LIMITED` | More than 5 requests from this IP in an hour |
+
+#### `POST /api/auth/reset-password`
+
+*(BE27)* Step 2: the frontend page `/reset-password` reads `token` from the address and sends it with the new password.
+
+- **Login required:** no
+- **Admin required:** no
+- **Headers:** `X-Requested-With: XMLHttpRequest`, `Content-Type: application/json`
+- **Rate limit:** 10 per 15 minutes per IP address
+
+**Request body**
+
+| Field | Type | Rules |
+|---|---|---|
+| `token` | string | Required, from the link (64 hex characters) |
+| `password` | string | Required, **the same rules as registration**: 8–72 characters |
+
+```json
+{ "token": "3f9a…(64 hex characters)", "password": "MyNewPassword123" }
+```
+
+**200 OK**
+
+```json
+{ "message": "Your password has been changed. Please log in with your new password." }
+```
+
+- **The user is not logged in.** Send them to the login page (the login code step still applies when it's on).
+- **Every existing login ends**, on every phone and browser: their next request gets 401 `"Please log in again."`.
+- An account whose email wasn't verified yet becomes verified (the link proves they own the inbox).
+- A "Your password was changed" email is sent.
+
+**Errors**
+
+| Status | Code | Message / when |
+|---|---|---|
+| 400 | `INVALID_REQUEST` | `fields.password` (e.g. "Password must be at least 8 characters."), or `fields.token` for a badly formed token |
+| 400 | `RESET_LINK_INVALID` | `"This link has expired or has already been used. Please ask for a new one."` Used, replaced by a newer link, or older than 30 minutes. Show a link to "Forgot password" |
+| 429 | `RATE_LIMITED` | More than 10 attempts from this IP in 15 minutes |
+
 #### `GET /api/auth/me`
 
 Returns the logged-in user. Use it when the app loads to find out whether someone is logged in.
@@ -558,6 +633,58 @@ Returns the logged-in user. Use it when the app loads to find out whether someon
 | 401 | `UNAUTHENTICATED` | `"Please log in to continue."` No cookie, or the token is invalid or expired, or the account no longer exists |
 
 Every endpoint marked **Login required** returns this same `401` when the user isn't logged in.
+
+### Account
+
+#### `DELETE /api/account`
+
+*(BE27)* The logged-in shopper deletes **their own** account.
+
+- **Login required:** yes
+- **Admin required:** no (admins are refused, below)
+- **Headers:** `X-Requested-With: XMLHttpRequest`, `Content-Type: application/json`
+- **Rate limit:** 5 per 15 minutes **per user**
+
+**Request body**
+
+| Field | Type | Rules |
+|---|---|---|
+| `password` | string | Required, the account's **current** password |
+| `confirm` | string | Required, exactly `"DELETE"` (capitals), typed by the user |
+
+```json
+{ "password": "DemoShopper123", "confirm": "DELETE" }
+```
+
+**200 OK** (the response also clears the login and cart cookies)
+
+```json
+{ "message": "Your account has been deleted." }
+```
+
+**What happens:**
+
+| Data | What happens |
+|---|---|
+| The account | Deleted: it can't log in, and every login on every device ends. The email address is freed: registering again with it creates a **new, empty** account |
+| Orders | **Kept** for the store's records (sales, refunds), but no longer in any account. Registering again does **not** bring them back |
+| Reviews | Deleted (product ratings update straight away) |
+| Cart | Deleted |
+
+A "Your Adorn account has been deleted" email is sent to the address the account had.
+
+**Errors**
+
+| Status | Code | Message / when |
+|---|---|---|
+| 400 | `INVALID_REQUEST` | `fields.confirm`: `"Type DELETE to confirm."`; `fields.password` when missing |
+| 401 | `UNAUTHENTICATED` | Not logged in |
+| 401 | `WRONG_PASSWORD` | `"Your password is incorrect."` The user stays logged in; don't log them out |
+| 403 | `FORBIDDEN` | `"Admin accounts can't be deleted here."`, or the `X-Requested-With` header is missing |
+| 409 | `ORDERS_IN_PROGRESS` | `"You have orders that haven't been delivered yet. You can delete your account once they're delivered or cancelled."` Some order is **Pending** or **Shipped**, or a payment was started in the last 30 minutes and hasn't finished |
+| 429 | `RATE_LIMITED` | More than 5 attempts in 15 minutes |
+
+**For the frontend:** put it on the account page under "Delete account", explain what's kept and what's removed (the table above), and ask for the password and for the user to type DELETE. After the 200, clear any saved user state and go to the home page.
 
 ### Settings
 
@@ -1930,7 +2057,7 @@ Both dates are **included**: `from=2026-09-01&to=2026-09-30` means all of Septem
       "id": "3f2a9c1e-7b4d-4e8a-9f01-6c2d5e8b7a43",
       "orderNumber": "ORD-20260930-3R6FTE",
       "placedAt": "2026-09-30T14:05:12.000Z",
-      "customer": { "name": "Ama Mensah", "email": "ama@example.com", "userId": 2, "isGuest": false },
+      "customer": { "name": "Ama Mensah", "email": "ama@example.com", "userId": 2, "isGuest": false, "accountDeleted": false },
       "totalGhs": 8000,
       "status": "Pending",
       "refundStatus": "none",
@@ -1944,7 +2071,7 @@ Both dates are **included**: `from=2026-09-01&to=2026-09-30` means all of Septem
 }
 ```
 
-- `customer` holds the name and email given **at checkout**. `isGuest` is `true` (with `userId: null`) for orders placed without logging in that **aren't linked** to an account. A guest order linked later (BE25: same email, verified) has the account's `userId` and `isGuest: false`; its details show `linkedAt`.
+- `customer` holds the name and email given **at checkout**. `isGuest` is `true` (with `userId: null`) for orders placed without logging in that **aren't linked** to an account. A guest order linked later (BE25: same email, verified) has the account's `userId` and `isGuest: false`; its details show `linkedAt`. `accountDeleted` *(BE27)* is `true` when the shopper has since **deleted their account**: show the account as **"Deleted user"**. The order's own `name`, `email`, `phone` and delivery address are kept for the store's records.
 - `refundStatus` is **calculated** from the order's refunds each time:
   - `none`: nothing refunded;
   - `partial`: some refunded;
@@ -1976,7 +2103,7 @@ Everything staff need to handle one order.
     "orderNumber": "ORD-20260930-3R6FTE",
     "placedAt": "2026-09-30T14:05:12.000Z",
     "status": "Pending",
-    "customer": { "name": "Ama Mensah", "email": "ama@example.com", "phone": "0241234567", "userId": 2, "isGuest": false },
+    "customer": { "name": "Ama Mensah", "email": "ama@example.com", "phone": "0241234567", "userId": 2, "isGuest": false, "accountDeleted": false },
     "linkedAt": null,
     "deliveryAddress": "12 Oxford Street, Osu, Accra",
     "deliveryRegionName": "Greater Accra",

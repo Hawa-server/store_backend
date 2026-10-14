@@ -15,6 +15,12 @@ module.exports = (sequelize, DataTypes) => {
       passwordHash: { type: DataTypes.STRING(255), allowNull: false },
       isAdmin: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
       emailVerifiedAt: { type: DataTypes.DATE, allowNull: true },
+      // BE27: copied into every login token as "sv". Adding 1 signs the user
+      // out on every device (password reset, account deletion).
+      sessionVersion: { type: DataTypes.INTEGER.UNSIGNED, allowNull: false, defaultValue: 0 },
+      // BE27: set when the shopper deleted their account (the row stays as an
+      // empty shell, because past orders point at it).
+      deletedAt: { type: DataTypes.DATE, allowNull: true },
     },
     {
       tableName: 'Users',

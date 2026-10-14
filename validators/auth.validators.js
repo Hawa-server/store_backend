@@ -15,6 +15,13 @@ const email = z
   .max(255, { error: 'Email is too long.' })
   .pipe(z.email({ error: 'Enter a valid email address.' }));
 
+// A NEW password: the same rule for registration and password resets (BE27).
+// Min 8 per the plan. Max 72 because bcrypt ignores anything after 72 bytes.
+const newPassword = z
+  .string({ error: 'Password is required.' })
+  .min(8, { error: 'Password must be at least 8 characters.' })
+  .max(72, { error: 'Password must be 72 characters or fewer.' });
+
 const registerSchema = z.object({
   name: z
     .string({ error: 'Name is required.' })
@@ -22,11 +29,7 @@ const registerSchema = z.object({
     .min(1, { error: 'Name is required.' })
     .max(100, { error: 'Name must be 100 characters or fewer.' }),
   email,
-  // Min 8 per the plan. Max 72 because bcrypt ignores anything after 72 bytes.
-  password: z
-    .string({ error: 'Password is required.' })
-    .min(8, { error: 'Password must be at least 8 characters.' })
-    .max(72, { error: 'Password must be 72 characters or fewer.' }),
+  password: newPassword,
 });
 
 const verifySchema = z.object({
@@ -56,4 +59,29 @@ const verifyCodeSchema = z.object({
     .regex(/^\d{6}$/, { error: 'Enter the 6-digit code.' }),
 });
 
-module.exports = { registerSchema, verifySchema, resendSchema, loginSchema, verifyCodeSchema };
+// POST /api/auth/forgot-password (BE27)
+const forgotSchema = z.object({ email });
+
+// POST /api/auth/reset-password (BE27). Reset tokens are 64 hex characters,
+// like verification tokens; anything else is a link that can't work.
+const resetSchema = z.object({
+  token: z
+    .string({ error: 'This link has expired or has already been used. Please ask for a new one.' })
+    .regex(/^[a-f0-9]{64}$/, { error: 'This link has expired or has already been used. Please ask for a new one.' }),
+  password: newPassword,
+});
+
+// DELETE /api/account (BE27): the current password, and the word DELETE
+// typed on purpose, so an account is never deleted by a slip.
+const deleteAccountSchema = z.object({
+  password: z
+    .string({ error: 'Enter your password.' })
+    .min(1, { error: 'Enter your password.' })
+    .max(72, { error: 'Your password is incorrect.' }),
+  confirm: z.literal('DELETE', { error: 'Type DELETE to confirm.' }),
+});
+
+module.exports = {
+  forgotSchema,
+  resetSchema,
+  deleteAccountSchema, registerSchema, verifySchema, resendSchema, loginSchema, verifyCodeSchema };

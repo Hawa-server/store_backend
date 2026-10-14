@@ -32,6 +32,7 @@ const settingsRoutes = require('./routes/settings.routes');
 const adminRoutes = require('./routes/admin.routes');
 const reviewsRoutes = require('./routes/reviews.routes');
 const deliveryRoutes = require('./routes/delivery.routes');
+const accountRoutes = require('./routes/account.routes');
 
 const app = express();
 
@@ -78,6 +79,7 @@ app.use(cookieParser());
 // --- Routes ---
 app.use('/api/health', healthRoutes);
 app.use('/api/auth', authRoutes);
+app.use('/api/account', accountRoutes);
 app.use('/api/categories', categoriesRoutes);
 app.use('/api/products', productsRoutes);
 app.use('/api/cart', cartRoutes);

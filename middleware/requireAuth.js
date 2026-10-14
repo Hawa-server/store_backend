@@ -9,17 +9,22 @@
  * row, so admin checks later use the database's isAdmin, not the token's claim.
  */
 const AppError = require('../utils/AppError');
-const { findUserFromRequest } = require('../services/auth/currentUser');
+const { checkLogin } = require('../services/auth/currentUser');
 
 /*
  * requireAuth(req, res, next)
  * Receives: the Express request/response and `next`.
  * Returns: nothing. Sets req.user and calls next(), or passes a 401
- *          UNAUTHENTICATED error to the error handler.
+ *          UNAUTHENTICATED error to the error handler. When the user's
+ *          sessions were ended (password reset, account deleted: BE27), the
+ *          message says "Please log in again." instead.
  */
 async function requireAuth(req, res, next) {
-  const user = await findUserFromRequest(req);
-  if (!user) return next(new AppError(401, 'UNAUTHENTICATED', 'Please log in to continue.'));
+  const { user, reason } = await checkLogin(req);
+  if (!user) {
+    const message = reason === 'session_ended' ? 'Please log in again.' : 'Please log in to continue.';
+    return next(new AppError(401, 'UNAUTHENTICATED', message));
+  }
   req.user = user;
   next();
 }

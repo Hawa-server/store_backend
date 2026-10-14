@@ -37,8 +37,10 @@ const NOTHING_LINKED = { ordersLinked: 0, cartItemsAdded: 0, cartItemsReduced: 0
  * Throws: if the database work fails (everything is rolled back).
  */
 async function linkGuestActivity(userId) {
-  const user = await User.findByPk(userId, { attributes: ['id', 'email', 'emailVerifiedAt'] });
-  if (!user || !user.emailVerifiedAt) return { ...NOTHING_LINKED };
+  const user = await User.findByPk(userId, { attributes: ['id', 'email', 'emailVerifiedAt', 'deletedAt'] });
+  // Deleted accounts (BE27) never get anything linked: their shell keeps only
+  // the orders it already had.
+  if (!user || !user.emailVerifiedAt || user.deletedAt) return { ...NOTHING_LINKED };
 
   // Emails are stored lower-cased and trimmed (Zod, and the BE25 migration for
   // older rows), and the column ignores case, so a plain comparison matches

@@ -9,7 +9,7 @@
  * Refund rows each time, never stored, so it can never disagree with them.
  */
 const { fn, col, Op } = require('sequelize');
-const { Order, Refund } = require('../../models');
+const { Order, Refund, User } = require('../../models');
 const { toLimitOffset, toPage } = require('../../utils/pagination');
 const { accraDayRange } = require('../../utils/dates');
 const { loadOrderDetails, toItemView } = require('./order.service');
@@ -25,6 +25,20 @@ const ADMIN_PAGE_SIZE = 20;
 function refundStatus(totalGhs, refundedGhs) {
   if (refundedGhs <= 0) return 'none';
   return refundedGhs >= totalGhs ? 'full' : 'partial';
+}
+
+/*
+ * deletedUserIds(userIds)
+ * Receives: the account ids behind some orders (nulls are ignored).
+ * Returns: a Set of those ids whose account was deleted by its owner (BE27),
+ *          in ONE query. Their orders show "Deleted user"; the order's own
+ *          name, phone, email and address are kept for the store's records.
+ */
+async function deletedUserIds(userIds) {
+  const ids = [...new Set(userIds.filter(Boolean))];
+  if (!ids.length) return new Set();
+  const rows = await User.findAll({ where: { id: ids, deletedAt: { [Op.ne]: null } }, attributes: ['id'] });
+  return new Set(rows.map((row) => row.id));
 }
 
 /*
@@ -72,6 +86,7 @@ async function listOrders({ status, from, to, page }) {
     ...toLimitOffset(page, ADMIN_PAGE_SIZE),
   });
   const refunded = await refundedByOrder(rows.map((order) => order.id));
+  const deleted = await deletedUserIds(rows.map((order) => order.userId));
 
   const items = rows.map((order) => {
     const refundedGhs = refunded.get(order.id) || 0;
@@ -79,7 +94,13 @@ async function listOrders({ status, from, to, page }) {
       id: order.publicId, // the UUID (BE26); order.id stays internal
       orderNumber: order.orderNumber,
       placedAt: order.createdAt,
-      customer: { name: order.name, email: order.email, userId: order.userId, isGuest: order.userId === null },
+      customer: {
+        name: order.name,
+        email: order.email,
+        userId: order.userId,
+        isGuest: order.userId === null,
+        accountDeleted: deleted.has(order.userId), // BE27: show "Deleted user"
+      },
       totalGhs: order.total,
       status: order.status,
       refundStatus: refundStatus(order.total, refundedGhs),
@@ -110,7 +131,14 @@ async function getOrder(orderId) {
     orderNumber: order.orderNumber,
     placedAt: order.createdAt,
     status: order.status,
-    customer: { name: order.name, email: order.email, phone: order.phone, userId: order.userId, isGuest: order.userId === null },
+    customer: {
+      name: order.name,
+      email: order.email,
+      phone: order.phone,
+      userId: order.userId,
+      isGuest: order.userId === null,
+      accountDeleted: (await deletedUserIds([order.userId])).has(order.userId), // BE27: show "Deleted user"
+    },
     // Set when the order was placed as a guest and later linked to this
     // account (BE25): "Placed as a guest, linked to this account on …".
     linkedAt: order.linkedAt,
