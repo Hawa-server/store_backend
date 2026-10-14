@@ -1998,3 +1998,80 @@ Content-Type: application/json
 - **Failures still don't break anything.** `sendEmailSafely` catches the error, logs the label and reason, and returns false: orders, registrations and logins carry on. The login code still answers 503 "try again", because without it the user can't log in.
 - **Secrets.** The API key is read from `.env`, sent only in the `api-key` header, and never put in an error message or log line (a test checks every log line). If settings are missing, the error names the **missing keys**, never any values.
 - **Real delivery has consequences.** Brevo really delivers, so only real, consenting addresses should be used for testing. A `@gmail.com` sender without a domain of its own may land in **Spam**. Brevo's *Transactional → Logs* shows whether each email was delivered, bounced or blocked.
+
+## BE27 — Forgot Password and Delete Account (extra task)
+
+### What was built and why
+
+Two things every real shop needs: **"Forgot password"** (set a new password through a link sent to your inbox) and **"Delete my account"**. Both must **end every existing login**, on every phone and browser, which our login tokens couldn't do before. So BE27 has three parts: signing out everywhere, the password reset, and account deletion. The task is described in [docs/BE27-forgot-password-delete-account.md](BE27-forgot-password-delete-account.md).
+
+### New endpoints
+
+| Method and path | Who | What it does |
+|---|---|---|
+| `POST /api/auth/forgot-password` | Anyone | Emails a one-use reset link (same answer whether or not the account exists) |
+| `POST /api/auth/reset-password` | Anyone with a link | Sets the new password, ends every login, sends "password changed" |
+| `DELETE /api/account` | Logged in | Deletes your own account (password + "DELETE") |
+
+### Table changes
+
+- **Users:** `sessionVersion` (a counter, starts at 0) and `deletedAt`.
+- **EmailTokens:** the type list gains `passwordReset`. Reset links live in the same table as verification links and login codes: one row per link, **only the hash** stored, `expiresAt`, `usedAt`. A user **has many** EmailTokens.
+
+### New or changed files
+
+| File | Purpose |
+|---|---|
+| `migrations/20261017000001-sessions-reset-delete.js` | **New.** The two Users columns and the new token type (with a working "down") |
+| `services/auth/currentUser.js`, `middleware/requireAuth.js` | Refuse tokens whose `sv` no longer matches, and deleted users; "Please log in again." |
+| `services/auth/auth.service.js` | Login tokens now carry `sv` |
+| `services/auth/passwordReset.service.js` | **New.** `requestPasswordReset` and `resetPassword` |
+| `services/account/deleteAccount.service.js` | **New.** The checks and the one-transaction deletion |
+| `controllers/account.controller.js`, `routes/account.routes.js` | **New.** `DELETE /api/account` (mounted in `app.js`) |
+| `controllers/auth.controller.js`, `routes/auth.routes.js` | The two password endpoints |
+| `validators/auth.validators.js` | `newPassword` (shared with registration), `forgotSchema`, `resetSchema`, `deleteAccountSchema` |
+| `middleware/rateLimits.js` | Forgot (5/hour/IP), reset (10/15 min/IP), delete (5/15 min **per user**) |
+| `services/email/templates/passwordReset.js`, `passwordChanged.js`, `accountDeleted.js` | **New** emails |
+| `services/account/guestLink.service.js` | Never links anything to a deleted account (BE25) |
+| `services/order/adminOrder.service.js` | `customer.accountDeleted` for "Deleted user" |
+
+### How a request flows (a password reset)
+
+```text
+POST /api/auth/reset-password  { token, password }
+  → resetLimiter → csrfCheck → validate (64-hex token; 8–72 character password)
+  → auth.controller.resetPassword → passwordReset.service.resetPassword
+      bcrypt.hash(new password)                  (slow on purpose: done BEFORE locking anything)
+      transaction:
+        SELECT … FROM EmailTokens WHERE tokenHash = sha256(token) FOR UPDATE
+        unknown / used / expired? → 400 RESET_LINK_INVALID
+        UPDATE EmailTokens SET usedAt  (this link, other reset links, open login codes)
+        UPDATE Users SET passwordHash, sessionVersion = sessionVersion + 1, emailVerifiedAt (if empty)
+      COMMIT
+      "Your password was changed" email (after the commit)
+  ← 200 { message }      (not logged in: the user logs in again)
+```
+
+### Key concepts
+
+- **Why a JWT can't simply be "logged out".** A login token is a signed note that says "user 12, valid until tomorrow". The server doesn't keep a list of them, so it can't cross one out. The trick: the token also carries `sv`, the user's **session version** at login time. Every request already loads the user (`requireAuth`), so it compares the two. Raising `sessionVersion` by 1 makes **every older token** stop matching: "sign out everywhere" with one number. Old tokens (from before BE27) have no `sv` and count as 0, so deploying didn't log anyone out.
+- **Not revealing who has an account.** "Forgot password" always answers the same message, and answers **before** doing the work: the lookup, the per-email limit and the email run after the response has gone. Otherwise a real account would answer more slowly (database work, email) than an unknown one, and that timing difference would leak who's a customer. The per-email limit (3 an hour) is silent for the same reason.
+- **Reset links are passwords, so they're stored like passwords.** 32 random bytes in the email; only the SHA-256 hash in the database. They work once, for 30 minutes, and a new request cancels older ones, so only the latest email works. The token row is locked while it's used, so two clicks can't both use it.
+- **The reset transaction** does everything or nothing: new password hash, link used, other links and login codes cancelled, `sessionVersion + 1`, email marked verified (clicking the link proves inbox ownership). The emails come after the commit, as always.
+- **Soft delete versus hard delete.** Deleting the Users row would break the orders that point at it (and the store must keep sales and refund records). So the account becomes an **empty shell**: name "Deleted user", a made-up `deleted-<uuid>@deleted.invalid` email (the reserved `.invalid` domain can never receive mail, and the real address is free to register again), a password "hash" that isn't a bcrypt hash at all (no password can ever match it), `deletedAt`, and `sessionVersion + 1`. Personal things that belong to the *account* (reviews, cart, tokens) are deleted; the orders stay, with the delivery details the store needs.
+- **Guard rails.** Typing the password again proves it's the owner, not someone using a phone left logged in. Typing "DELETE" prevents accidents. Admins are refused (the store must never lose its last admin). Orders still on their way, or a payment started in the last 30 minutes, block deletion, because otherwise a late payment could create an order nobody can follow.
+- **Rate limit per user.** Delete attempts are counted per **account** (`keyGenerator: user:<id>`), not per IP, because what's being protected is one account's password.
+
+### Check it yourself in MySQL Workbench
+
+```sql
+-- Session versions, and deleted accounts (empty shells)
+SELECT id, name, email, sessionVersion, deletedAt FROM Users ORDER BY id DESC LIMIT 10;
+
+-- Reset links (only hashes are stored), newest first
+SELECT userId, type, LEFT(tokenHash, 12) AS hash_start, expiresAt, usedAt FROM EmailTokens
+WHERE type = 'passwordReset' ORDER BY id DESC LIMIT 10;
+
+-- Orders kept from deleted accounts
+SELECT o.orderNumber, o.status, u.name AS account FROM Orders o JOIN Users u ON u.id = o.userId WHERE u.deletedAt IS NOT NULL;
+```

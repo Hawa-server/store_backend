@@ -278,9 +278,11 @@ async function completeLogin(user, { userAgent, guestToken }) {
     console.error('[cart] guest cart merge failed:', err.message);
   }
 
-  // Minimum claims only: who (sub) and their role. No personal data or secrets.
+  // Minimum claims only: who (sub), their role, and their session version
+  // (sv, BE27: when it no longer matches the user's, the token is refused,
+  // which is how "sign out everywhere" works). No personal data or secrets.
   const token = jwt.sign(
-    { sub: String(user.id), role: user.isAdmin ? 'admin' : 'customer' },
+    { sub: String(user.id), role: user.isAdmin ? 'admin' : 'customer', sv: user.sessionVersion },
     process.env.JWT_SECRET,
     { algorithm: 'HS256', expiresIn: process.env.JWT_EXPIRES_IN || '1d' }
   );

@@ -13,15 +13,18 @@ const rateLimit = require('express-rate-limit');
 const AppError = require('../utils/AppError');
 
 /*
- * createLimiter({ windowMinutes, limit })
- * Receives: the time window in minutes and the number of requests allowed in it.
+ * createLimiter({ windowMinutes, limit, keyGenerator })
+ * Receives: the time window in minutes, the number of requests allowed in it,
+ *           and optionally a keyGenerator, to count per something other
+ *           than the IP address (e.g. per logged-in user).
  * Returns: an Express middleware that answers 429 RATE_LIMITED (in our
  *          standard error format) once the limit is reached.
  */
-function createLimiter({ windowMinutes, limit }) {
+function createLimiter({ windowMinutes, limit, keyGenerator }) {
   return rateLimit({
     windowMs: windowMinutes * 60 * 1000,
     limit,
+    ...(keyGenerator && { keyGenerator }),
     // Send the standard RateLimit headers so clients can see when to retry.
     standardHeaders: 'draft-8',
     legacyHeaders: false,
@@ -47,4 +50,11 @@ module.exports = {
   // Higher, because the frontend asks again every few seconds while a mobile
   // money payment is still pending (BE10).
   verifyPaymentLimiter: createLimiter({ windowMinutes: 15, limit: 30 }),
+  // Forgot / reset password (BE27). Forgot is also limited per email in the
+  // service (3 links an hour), silently, so the answer never changes.
+  forgotLimiter: createLimiter({ windowMinutes: 60, limit: 5 }),
+  resetLimiter: createLimiter({ windowMinutes: 15, limit: 10 }),
+  // Deleting an account (BE27): counted per USER, not per IP, because it
+  // guards a password check for one account. Must come after requireAuth.
+  deleteAccountLimiter: createLimiter({ windowMinutes: 15, limit: 5, keyGenerator: (req) => `user:${req.user.id}` }),
 };

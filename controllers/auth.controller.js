@@ -10,6 +10,7 @@
  */
 const authService = require('../services/auth/auth.service');
 const loginCodeService = require('../services/auth/loginCode.service');
+const passwordResetService = require('../services/auth/passwordReset.service');
 const AppError = require('../utils/AppError');
 const { setAuthCookie, clearAuthCookie } = require('../utils/authCookie');
 const { COOKIE_NAME: GUEST_CART_COOKIE, readGuestCartToken, clearGuestCartCookie } = require('../utils/guestCartCookie');
@@ -128,6 +129,34 @@ async function resendCode(req, res) {
   res.json({ message: `We've emailed you a new code. It expires in ${loginCodeService.CODE_MINUTES} minutes.` });
 }
 
+const FORGOT_MESSAGE = "If an account exists for this email, we've sent a link to reset your password.";
+
+/*
+ * POST /api/auth/forgot-password (BE27)
+ * Receives: req.valid.body = { email }.
+ * Returns: 200 { message }: ALWAYS the same message, sent straight away.
+ * The real work (finding the account, the per-email limit, creating the link,
+ * emailing it) runs only AFTER the answer has gone, so an existing account
+ * and an unknown email look exactly the same, including how long they take.
+ */
+function forgotPassword(req, res) {
+  res.json({ message: FORGOT_MESSAGE });
+  passwordResetService.requestPasswordReset(req.valid.body.email).catch((err) => {
+    console.error('[password reset] request failed:', err.message);
+  });
+}
+
+/*
+ * POST /api/auth/reset-password (BE27)
+ * Receives: req.valid.body = { token, password }.
+ * Returns: 200 { message }. The password is changed and every login on every
+ *          device ends; the user is NOT logged in here (they log in again).
+ *          400 RESET_LINK_INVALID for a used, replaced or expired link.
+ */
+async function resetPassword(req, res) {
+  res.json(await passwordResetService.resetPassword(req.valid.body.token, req.valid.body.password));
+}
+
 /*
  * POST /api/auth/logout
  * Receives: nothing. Works even if not logged in.
@@ -151,4 +180,6 @@ function me(req, res) {
   res.json({ user: authService.toSafeUser(req.user) });
 }
 
-module.exports = { register, verify, resendVerification, login, verifyCode, resendCode, logout, me };
+module.exports = {
+  register, verify, resendVerification, login, verifyCode, resendCode, logout, me, forgotPassword, resetPassword,
+};

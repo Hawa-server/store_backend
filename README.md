@@ -138,6 +138,13 @@ The delivery fee depends on the region and town the shopper chooses at checkout:
 
 A fee change only affects **new** checkouts: every order keeps the fee and area it was charged, in its emails and refunds too.
 
+### Forgot password and deleting an account
+
+- **Forgot password:** the shopper asks for a link (`POST /api/auth/forgot-password`); the answer is the same whether or not the email has an account. The emailed link works **once, for 30 minutes**, and a newer link cancels older ones. Setting a new password (`POST /api/auth/reset-password`) **logs the account out on every device** and sends a "password changed" email. In development, the reset link is also printed in the server console.
+- **Delete account** (`DELETE /api/account`): needs the current password and the word `DELETE`. Refused for admins, and while an order is Pending or Shipped (or a payment is in progress).
+- **Privacy note:** deleting an account removes the login, the reviews and the cart, and frees the email address (registering again creates a new, empty account). **Order records are kept** for the store's accounts (sales and refunds), no longer linked to any account the person can log in to; the admin sees them as "Deleted user".
+- **Signing out everywhere:** each login token carries the account's `sessionVersion`; a reset or deletion raises it, so all older logins stop working at once.
+
 ### Guest orders and new accounts
 
 Someone who pays **as a guest** and later creates an account with the **same email** finds those orders in **My Orders** (with cancelling while Pending, and reviews once Delivered), and what was left in the guest cart they paid from in their account cart. This happens only **after the email is verified** (right after verification, and again at every login), because orders contain a name, phone and address. Carts from checkouts that were never paid aren't moved. The verify and login responses report it in `linked` (see [docs/api.md](docs/api.md)).
@@ -146,7 +153,7 @@ Someone who pays **as a guest** and later creates an account with the **same ema
 
 ### Postman
 
-Import [docs/postman_collection.json](docs/postman_collection.json) into Postman. It has every endpoint, grouped as Health, Auth, Products, Cart, Delivery areas, Checkout, Orders, Reviews, Admin and Webhooks. The variables `deliveryRegionId` and `deliveryTownId` (both 1: Ashanti, Kumasi) are used by Checkout and the admin delivery requests.
+Import [docs/postman_collection.json](docs/postman_collection.json) into Postman. It has every endpoint, grouped as Health, Auth, Account, Products, Cart, Delivery areas, Checkout, Orders, Reviews, Admin and Webhooks. The variables `deliveryRegionId` and `deliveryTownId` (both 1: Ashanti, Kumasi) are used by Checkout and the admin delivery requests.
 
 - Set the collection variable **`baseUrl`**: `http://localhost:5000` locally, or your Render address.
 - Run **Auth → Log in** first. Postman keeps the login cookie for the rest. For the Admin folder, change the `email` and `password` variables to your admin account.
