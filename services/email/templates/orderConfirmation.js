@@ -12,6 +12,16 @@ const { formatGhanaDateTime } = require('../../../utils/dates');
 const { contactLines } = require('./storeContact');
 
 /*
+ * discountLine(order)
+ * Receives: the confirmation view.
+ * Returns: "Discount (ADORN10) − GHS 24.00" (BE29), or null when no code was used.
+ */
+function discountLine(order) {
+  if (!order.discountGhs) return null;
+  return `Discount (${order.discountCode}) − ${formatGhs(order.discountGhs)}`;
+}
+
+/*
  * deliveryLine(order)
  * Receives: the confirmation view.
  * Returns: the delivery line of the totals, with the area it was charged for
@@ -54,6 +64,7 @@ function orderConfirmationEmail({ order, link, linkDays }) {
     ),
     '',
     `Subtotal: ${formatGhs(order.subtotalGhs)}`,
+    ...(discountLine(order) ? [discountLine(order)] : []),
     deliveryLine(order),
     `Total paid: ${formatGhs(order.totalGhs)} (${order.currency})`,
     `Payment method: ${payment}`,
@@ -100,6 +111,7 @@ function orderConfirmationEmail({ order, link, linkDays }) {
       </table>
       <p style="text-align:right;">
         Subtotal: ${escapeHtml(formatGhs(order.subtotalGhs))}<br>
+        ${discountLine(order) ? `${escapeHtml(discountLine(order))}<br>` : ''}
         ${escapeHtml(deliveryLine(order))}<br>
         <strong>Total paid: ${escapeHtml(formatGhs(order.totalGhs))} (${escapeHtml(order.currency)})</strong>
       </p>

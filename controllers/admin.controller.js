@@ -16,6 +16,7 @@ const dashboardService = require('../services/dashboard/dashboard.service');
 const settingsService = require('../services/settings/settings.service');
 const adminProductService = require('../services/product/adminProduct.service');
 const adminDeliveryService = require('../services/delivery/adminDelivery.service');
+const adminDiscountService = require('../services/discount/adminDiscount.service');
 const AppError = require('../utils/AppError');
 const { findOrderId } = require('../services/order/order.service');
 
@@ -257,6 +258,43 @@ async function updateDeliveryTown(req, res) {
   res.json({ town: await adminDeliveryService.updateTown(req.valid.params.id, req.valid.body, req.user.id) });
 }
 
+/*
+ * GET /api/admin/discount-codes?status=&page=   (BE29)
+ * Receives: req.valid.query = { status?, page }.
+ * Returns: 200 with the standard page object (newest first, 20 per page).
+ */
+async function listDiscountCodes(req, res) {
+  res.set('Cache-Control', 'no-store');
+  res.json(await adminDiscountService.listCodes(req.valid.query));
+}
+
+/*
+ * GET /api/admin/discount-codes/:id   (BE29)
+ * Receives: req.valid.params.id. Returns: 200 { discountCode } with its latest redemptions.
+ */
+async function getDiscountCode(req, res) {
+  res.set('Cache-Control', 'no-store');
+  res.json({ discountCode: await adminDiscountService.getCode(req.valid.params.id) });
+}
+
+/*
+ * POST /api/admin/discount-codes   (BE29)
+ * Receives: req.valid.body (the new code) and req.user (the admin).
+ * Returns: 201 { discountCode }.
+ */
+async function createDiscountCode(req, res) {
+  res.status(201).json({ discountCode: await adminDiscountService.createCode(req.valid.body, req.user.id) });
+}
+
+/*
+ * PATCH /api/admin/discount-codes/:id   (BE29)
+ * Receives: req.valid.params.id, req.valid.body (fields to change), req.user.
+ * Returns: 200 { discountCode }.
+ */
+async function updateDiscountCode(req, res) {
+  res.json({ discountCode: await adminDiscountService.updateCode(req.valid.params.id, req.valid.body, req.user.id) });
+}
+
 module.exports = {
   listProducts,
   getProduct,
@@ -277,4 +315,8 @@ module.exports = {
   updateDeliveryRegion,
   createDeliveryTown,
   updateDeliveryTown,
+  listDiscountCodes,
+  getDiscountCode,
+  createDiscountCode,
+  updateDiscountCode,
 };

@@ -52,6 +52,10 @@
     {
       "key": "password",
       "value": "DemoShopper123"
+    },
+    {
+      "key": "discountCodeId",
+      "value": "1"
     }
   ],
   "item": [
@@ -779,6 +783,47 @@
       ]
     },
     {
+      "name": "Discounts",
+      "item": [
+        {
+          "name": "Check a discount code",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Requested-With",
+                "value": "XMLHttpRequest"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/discounts/check",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "discounts",
+                "check"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"code\": \"adorn10\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
       "name": "Checkout",
       "description": "Start a payment, pay in the browser (test number 0551234987), then verify.",
       "item": [
@@ -809,7 +854,7 @@
             "description": "Copy checkout.reference into the reference variable and open checkout.authorizationUrl to pay.",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"Ama Mensah\",\n  \"email\": \"ama@example.com\",\n  \"phone\": \"0241234567\",\n  \"address\": \"House 12, Adum, near the post office\",\n  \"deliveryRegionId\": {{deliveryRegionId}},\n  \"deliveryTownId\": {{deliveryTownId}}\n}",
+              "raw": "{\n  \"name\": \"Ama Mensah\",\n  \"email\": \"ama@example.com\",\n  \"phone\": \"0241234567\",\n  \"address\": \"House 12, Adum, near the post office\",\n  \"deliveryRegionId\": {{deliveryRegionId}},\n  \"deliveryTownId\": {{deliveryTownId}},\n  \"discountCode\": \"ADORN10\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -1579,6 +1624,126 @@
             "body": {
               "mode": "raw",
               "raw": "{\n  \"isActive\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Discount codes",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/discount-codes?status=&page=1",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "discount-codes"
+              ],
+              "query": [
+                {
+                  "key": "status",
+                  "value": ""
+                },
+                {
+                  "key": "page",
+                  "value": "1"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Discount code details",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/discount-codes/{{discountCodeId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "discount-codes",
+                "{{discountCodeId}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Create discount code",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Requested-With",
+                "value": "XMLHttpRequest"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/discount-codes",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "discount-codes"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"code\": \"ADORN10\",\n  \"type\": \"percent\",\n  \"value\": 10,\n  \"maxDiscountPesewas\": 5000,\n  \"endsOn\": \"2026-12-31\",\n  \"usageLimit\": 100\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Switch a discount code off",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Requested-With",
+                "value": "XMLHttpRequest"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/discount-codes/{{discountCodeId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "discount-codes",
+                "{{discountCodeId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"isActive\": false\n}",
               "options": {
                 "raw": {
                   "language": "json"

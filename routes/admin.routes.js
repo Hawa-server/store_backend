@@ -19,6 +19,9 @@ const {
   regionParams, updateRegionBody, createTownBody, townParams, updateTownBody,
 } = require('../validators/delivery.validators');
 const {
+  createDiscountBody, updateDiscountBody, discountListQuery, discountIdParams,
+} = require('../validators/discount.validators');
+const {
   adminReviewsQuery, moderationReasonBody, unhideBody, reviewIdParams,
 } = require('../validators/review.validators');
 
@@ -41,6 +44,12 @@ router.get('/delivery-areas', controller.listDeliveryAreas);
 router.patch('/delivery-regions/:id', validate({ params: regionParams, body: updateRegionBody }), controller.updateDeliveryRegion);
 router.post('/delivery-towns', validate({ body: createTownBody }), controller.createDeliveryTown);
 router.patch('/delivery-towns/:id', validate({ params: townParams, body: updateTownBody }), controller.updateDeliveryTown);
+
+// Discount codes (BE29): list, view, create, edit. No deletes (switch off instead).
+router.get('/discount-codes', validate({ query: discountListQuery }), controller.listDiscountCodes);
+router.get('/discount-codes/:id', validate({ params: discountIdParams }), controller.getDiscountCode);
+router.post('/discount-codes', validate({ body: createDiscountBody }), controller.createDiscountCode);
+router.patch('/discount-codes/:id', validate({ params: discountIdParams, body: updateDiscountBody }), controller.updateDiscountCode);
 
 router.get('/orders', validate({ query: adminOrdersQuery }), controller.listOrders);
 router.get('/orders/:id', validate({ params: orderIdParams }), controller.getOrder);

@@ -8,6 +8,8 @@
  *   2. Calculate subtotal, delivery fee and total on the server, in pesewas.
  *      The delivery fee depends on the region and town chosen (BE24): the
  *      town's own fee, else the region's (delivery.service.js).
+ *      An optional discount code (BE29) takes money off the SUBTOTAL only:
+ *      total = subtotal − discount + deliveryFee (discount.service.js).
  *   3. Save a Checkout row (status 'open') with a unique reference, plus a
  *      CheckoutItems snapshot of the lines being paid for.
  *   4. AFTER saving, ask Paystack to start a GHS mobile-money payment for that total.
@@ -25,6 +27,7 @@ const AppError = require('../../utils/AppError');
 const cartService = require('../cart/cart.service');
 const settingsService = require('../settings/settings.service');
 const deliveryService = require('../delivery/delivery.service');
+const discountService = require('../discount/discount.service');
 const paystack = require('../payment/paystack.client');
 const { toUsdCents } = require('../../utils/currency');
 const { formatGhs } = require('../../utils/money');
@@ -81,7 +84,7 @@ async function priceCart(cart) {
  * startCheckout({ user, guestToken, details })
  * Receives: the logged-in user (or null for guests), the guest cart token (or
  *           null), and the validated { name, email, phone, address,
- *           deliveryRegionId, deliveryTownId? }.
+ *           deliveryRegionId, deliveryTownId?, discountCode? }.
  * Returns: { reference, accessCode, authorizationUrl, deliveryRegionName,
  *            deliveryTownName, subtotalGhs, deliveryFeeGhs, totalGhs,
  *            currency, subtotalUsd, deliveryFeeUsd, totalUsd, usdRate,
@@ -89,6 +92,8 @@ async function priceCart(cart) {
  *          (accessCode) or page (authorizationUrl).
  * Throws: 400/409 from priceCart; 400 (fields.deliveryRegionId or
  *         fields.deliveryTownId) for an area that can't be chosen;
+ *         400 DISCOUNT_INVALID with fields.discountCode for a code that
+ *         can't be used (the shopper can remove it and try again);
  *         502 PAYMENT_FAILED if Paystack can't start the payment (the
  *         checkout is then marked 'failed').
  */
@@ -97,7 +102,7 @@ async function startCheckout({ user, guestToken, details }) {
 
   // The money is calculated here, from the database. Nothing the client sent
   // about prices or totals is used (the validator dropped it anyway).
-  const { deliveryRegionId, deliveryTownId, ...contact } = details;
+  const { deliveryRegionId, deliveryTownId, discountCode: codeText, ...contact } = details;
   const { lines, subtotal } = await priceCart(cart);
   // The fee for the chosen area, from the database (BE24). It's saved on the
   // checkout below, and the order later copies THAT amount: if an admin
@@ -105,7 +110,22 @@ async function startCheckout({ user, guestToken, details }) {
   // (and is charged) exactly what they were shown.
   const area = await deliveryService.resolveDeliveryArea({ regionId: deliveryRegionId, townId: deliveryTownId });
   const deliveryFee = area.fee;
-  const total = subtotal + deliveryFee;
+
+  // The discount code, checked AGAIN here (the preview reserved nothing),
+  // with every rule, including "once per customer" for THIS checkout's email.
+  // Only the subtotal is discounted, never delivery, and the products can't
+  // go below 0, so the total is always at least the delivery fee.
+  let applied = null;
+  if (codeText) {
+    try {
+      applied = await discountService.checkCode(codeText, subtotal, { email: contact.email });
+    } catch (err) {
+      if (err.code !== 'DISCOUNT_INVALID') throw err;
+      throw new AppError(400, 'DISCOUNT_INVALID', err.message, { discountCode: err.message });
+    }
+  }
+  const discount = applied ? applied.discount : 0;
+  const total = subtotal - discount + deliveryFee;
   // Read the USD rate now, before anything is saved or sent to Paystack, so a
   // broken rate setting can't leave a half-started payment behind.
   const { usdRate, pesewasPerUsd } = await settingsService.getUsdRate();
@@ -127,6 +147,11 @@ async function startCheckout({ user, guestToken, details }) {
         deliveryRegionName: area.regionName,
         deliveryTownName: area.townName,
         subtotal,
+        // The code (a copy of its text) and the discount, saved now: the order
+        // later copies THESE, so it matches exactly what Paystack charged.
+        discountCodeId: applied ? applied.code.id : null,
+        discountCode: applied ? applied.code.code : null,
+        discountPesewas: discount,
         deliveryFee,
         total,
         status: 'open',
@@ -166,28 +191,34 @@ async function startCheckout({ user, guestToken, details }) {
     deliveryRegionName: checkout.deliveryRegionName,
     deliveryTownName: checkout.deliveryTownName,
     subtotalGhs: checkout.subtotal,
+    // null / 0 when no code was used (BE29).
+    discountCode: checkout.discountCode,
+    discountGhs: checkout.discountPesewas,
     deliveryFeeGhs: checkout.deliveryFee,
     totalGhs: checkout.total,
     currency: 'GHS',
     // USD (display only, cents). Same rule as the cart: convert each UNIT
     // price, then multiply and add, so these add up exactly on screen.
-    ...usdAmounts(lines, deliveryFee, pesewasPerUsd),
+    ...usdAmounts(lines, discount, deliveryFee, pesewasPerUsd),
     usdRate,
     chargeNote: `You will be charged ${formatGhs(checkout.total)}. USD amounts are an estimate for display only.`,
   };
 }
 
 /*
- * usdAmounts(lines, deliveryFee, pesewasPerUsd)
- * Receives: the priced lines (unitPrice in pesewas, quantity), the delivery
- *           fee in pesewas, and the rate as pesewas per dollar.
- * Returns: { subtotalUsd, deliveryFeeUsd, totalUsd } in whole cents, where
- *          totalUsd is always exactly subtotalUsd + deliveryFeeUsd.
+ * usdAmounts(lines, discount, deliveryFee, pesewasPerUsd)
+ * Receives: the priced lines (unitPrice in pesewas, quantity), the discount
+ *           and the delivery fee in pesewas, and the rate as pesewas per dollar.
+ * Returns: { subtotalUsd, discountUsd, deliveryFeeUsd, totalUsd } in whole
+ *          cents, where totalUsd is always exactly
+ *          subtotalUsd − discountUsd + deliveryFeeUsd (the discount is capped
+ *          at the subtotal in cents too, so the products never go below 0).
  */
-function usdAmounts(lines, deliveryFee, pesewasPerUsd) {
+function usdAmounts(lines, discount, deliveryFee, pesewasPerUsd) {
   const subtotalUsd = lines.reduce((sum, line) => sum + toUsdCents(line.unitPrice, pesewasPerUsd) * line.quantity, 0);
+  const discountUsd = Math.min(toUsdCents(discount, pesewasPerUsd), subtotalUsd);
   const deliveryFeeUsd = toUsdCents(deliveryFee, pesewasPerUsd);
-  return { subtotalUsd, deliveryFeeUsd, totalUsd: subtotalUsd + deliveryFeeUsd };
+  return { subtotalUsd, discountUsd, deliveryFeeUsd, totalUsd: subtotalUsd - discountUsd + deliveryFeeUsd };
 }
 
-module.exports = { startCheckout };
+module.exports = { startCheckout, priceCart };

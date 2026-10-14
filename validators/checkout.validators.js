@@ -48,6 +48,13 @@ const checkoutBody = z.object({
     .positive({ error: 'Choose a town from the list, or "Other town in this region".' })
     .nullable()
     .optional(),
+  // An optional discount code (BE29). Only its shape is checked here; whether
+  // it can be used (and how much it takes off) is decided by the server in
+  // discount.service.js. Blank means "no code".
+  discountCode: z.preprocess(
+    (value) => (typeof value === 'string' && value.trim() === '' ? undefined : value),
+    z.string({ error: "This code isn't valid." }).trim().max(50, { error: "This code isn't valid." }).optional()
+  ),
 });
 
 // POST /api/checkout/verify. A payment reference only ever contains letters,

@@ -148,6 +148,8 @@ async function getOrder(orderId) {
     deliveryTownName: order.deliveryTownName,
     items: order.items.map(toItemView),
     subtotalGhs: order.subtotal,
+    discountCode: order.discountCode, // BE29 (null if none)
+    discountGhs: order.discountPesewas, // BE29 (0 if none)
     deliveryFeeGhs: order.deliveryFee,
     totalGhs: order.total,
     currency: order.currency,

@@ -116,6 +116,10 @@ function toConfirmationView(order) {
     placedAt: order.createdAt,
     items: order.items.map(toItemView),
     subtotalGhs: order.subtotal,
+    // BE29: the code used (null if none) and the discount it gave (0 if none).
+    // totalGhs = subtotalGhs − discountGhs + deliveryFeeGhs.
+    discountCode: order.discountCode,
+    discountGhs: order.discountPesewas,
     deliveryFeeGhs: order.deliveryFee,
     totalGhs: order.total,
     currency: order.currency,

@@ -114,6 +114,7 @@ Every error response has this shape:
 | `EMAIL_NOT_VERIFIED` | 403 | Correct password, but the email address hasn't been verified yet |
 | `NOT_FOUND` | 404 | The resource or route doesn't exist (or isn't yours) |
 | `CONFLICT` | 409 | Duplicate, or the resource is in the wrong state |
+| `DISCOUNT_INVALID` | 400 | *(BE29)* The discount code can't be used; `message` says why (and at checkout `fields.discountCode` too) |
 | `WISHLIST_FULL` | 409 | *(BE28)* The wishlist already has 100 products |
 | `ORDERS_IN_PROGRESS` | 409 | *(BE27)* The account can't be deleted yet: an order is Pending or Shipped, or a payment is in progress |
 | `RESET_LINK_INVALID` | 400 | *(BE27)* The password reset link is unknown, already used, replaced by a newer one, or older than 30 minutes |
@@ -1344,6 +1345,56 @@ The regions and towns a shopper can choose, with each one's fee. Hidden regions 
 
 **Errors:** none expected (500 only if the server has a problem).
 
+### Discounts
+
+#### `POST /api/discounts/check`
+
+*(BE29)* "Does this code work, and how much would I save?" for the code box on the cart or checkout page. It checks the code against the shopper's **current cart** (guest or logged in, from the cookie). It's a **preview only**: nothing is reserved, and `POST /api/checkout` checks everything again.
+
+- **Login required:** no (guests can use codes)
+- **Headers:** `X-Requested-With: XMLHttpRequest`, `Content-Type: application/json`
+- **Rate limit:** 10 per 15 minutes per IP (stops anyone guessing codes)
+
+**Request body**
+
+```json
+{ "code": "adorn10" }
+```
+
+Any capitals work: codes are stored upper-case.
+
+**200 OK**
+
+```json
+{
+  "discount": {
+    "code": "ADORN10",
+    "discountGhs": 2050,
+    "discountUsd": 132,
+    "subtotalGhs": 20500,
+    "message": "10% off: you save GHS 20.50"
+  }
+}
+```
+
+- Show `message`, then send the code with the checkout as `discountCode`.
+- The discount applies to the **products' subtotal only**, never to delivery. Percent codes round **down** to the pesewa and may have a maximum; fixed codes never take more than the subtotal.
+- If the cart changes, check again (or simply let checkout work it out).
+
+**Errors**
+
+| Status | Code | Message / when |
+|---|---|---|
+| 400 | `INVALID_REQUEST` | `fields.code`: `"Enter a discount code."` |
+| 400 | `INVALID_REQUEST` | `"Your cart is empty."` |
+| 400 | `DISCOUNT_INVALID` | `"This code isn't valid."` (unknown or switched off) |
+| 400 | `DISCOUNT_INVALID` | `"This code isn't active yet."` / `"This code has expired."` |
+| 400 | `DISCOUNT_INVALID` | `"Spend GHS 200.00 or more to use this code."` (the minimum order, products only) |
+| 400 | `DISCOUNT_INVALID` | `"This code has reached its limit."` |
+| 400 | `DISCOUNT_INVALID` | `"You've already used this code."` Only for **logged-in** shoppers here (their account email). Guests find out at checkout, when their email is known |
+| 409 | `OUT_OF_STOCK` | Something in the cart is unavailable (as at checkout) |
+| 429 | `RATE_LIMITED` | Too many tries |
+
 ### Checkout
 
 Checkout turns the current cart into a **Paystack mobile-money payment** in GHS. It works for guests and logged-in shoppers. The server calculates every amount from the cart, and any amount sent by the frontend is ignored.
@@ -1376,6 +1427,7 @@ If a payment fails or is abandoned, just call `POST /api/checkout` again with th
 | `address` | string | Required, 5–500 characters. The street, house number or landmark |
 | `deliveryRegionId` | number | **Required** *(BE24)*. A region `id` from `GET /api/delivery-areas` |
 | `deliveryTownId` | number or `null` | Optional *(BE24)*. A town `id` **from that region**. Leave it out or send `null` for **"Other town in this region"** (the region's fee applies) |
+| `discountCode` | string | Optional *(BE29)*. The code the shopper typed, any capitals (e.g. `"adorn10"`). Blank or missing = no code. The server checks it again and works out the discount |
 
 Any other fields (for example `total` or `deliveryFee`) are ignored: the server works out the delivery fee from the region and town. For logged-in users, pre-fill `name` and `email` from `GET /api/auth/me`; the shopper can still change them.
 
@@ -1398,25 +1450,29 @@ Any other fields (for example `total` or `deliveryFee`) are ignored: the server 
     "deliveryRegionName": "Ashanti",
     "deliveryTownName": "Kumasi",
     "subtotalGhs": 20500,
+    "discountCode": "ADORN10",
+    "discountGhs": 2050,
     "deliveryFeeGhs": 1000,
-    "totalGhs": 21500,
+    "totalGhs": 19450,
     "currency": "GHS",
     "subtotalUsd": 1322,
+    "discountUsd": 132,
     "deliveryFeeUsd": 65,
-    "totalUsd": 1387,
+    "totalUsd": 1255,
     "usdRate": 15.5,
-    "chargeNote": "You will be charged GHS 215.00. USD amounts are an estimate for display only."
+    "chargeNote": "You will be charged GHS 194.50. USD amounts are an estimate for display only."
   }
 }
 ```
 
-(Example cart: Black Canvas Tote Bag × 1 (12000 → 774) and Makeup Setting Spray × 1 (8500 → 548), delivered to Kumasi, Ashanti (1000 → 65).)
+(Example cart: Black Canvas Tote Bag × 1 (12000 → 774) and Makeup Setting Spray × 1 (8500 → 548), delivered to Kumasi, Ashanti (1000 → 65), with `ADORN10` = 10% off the products (2050 → 132). Without a code, `discountCode` is `null` and `discountGhs` / `discountUsd` are `0`.)
 
 - `deliveryRegionName` and `deliveryTownName` say where it's going; `deliveryTownName` is `null` for "Other town in this region". Show "Delivery to: Kumasi, Ashanti" (or "Delivery to: Ashanti (other town)") on the payment page.
 - **The fee is fixed when the checkout starts.** If the store changes a fee before the payment is confirmed, this checkout and its order keep the fee shown here, which is exactly what Paystack charges.
 
-- **GHS is the currency charged.** The `…Ghs` amounts are pesewas: `totalGhs = subtotalGhs + deliveryFeeGhs`, and `totalGhs` is exactly what Paystack charges.
-- The `…Usd` amounts are US cents, **display only**: `totalUsd = subtotalUsd + deliveryFeeUsd`, and `subtotalUsd` equals the cart's `subtotalUsd`.
+- **GHS is the currency charged.** The `…Ghs` amounts are pesewas: `totalGhs = subtotalGhs − discountGhs + deliveryFeeGhs`, and `totalGhs` is exactly what Paystack charges.
+- **Discounts (BE29)** come off the **products only**, never delivery, and never below 0 (so `totalGhs` is at least the delivery fee). The discount is fixed when the checkout starts: if the code expires or runs out while the shopper is paying, the order still gets it.
+- The `…Usd` amounts are US cents, **display only**: `totalUsd = subtotalUsd − discountUsd + deliveryFeeUsd`, and `subtotalUsd` equals the cart's `subtotalUsd`.
 - **Always show `chargeNote`** (or the GHS total) next to the Pay button, especially when the shopper is viewing USD, so they know exactly what they'll pay.
 
 **Errors**
@@ -1427,6 +1483,7 @@ Any other fields (for example `total` or `deliveryFee`) are ignored: the server 
 | 400 | `INVALID_REQUEST` | `"Your cart is empty."` |
 | 400 | `INVALID_REQUEST` | `fields.deliveryRegionId`: `"Choose a delivery region."` The region is missing, unknown, or **hidden** by the store. Reload the delivery areas |
 | 400 | `INVALID_REQUEST` | `fields.deliveryTownId`: `"Choose a town in <region>, or "Other town in this region"."` The town is unknown, hidden, or **belongs to a different region** |
+| 400 | `DISCOUNT_INVALID` | `fields.discountCode` with the reason (the same messages as `POST /api/discounts/check`, plus `"You've already used this code."` for this email). Show it next to the code box; the shopper can remove the code and pay without it |
 | 409 | `OUT_OF_STOCK` | `"Only X of <product> available. Please update your cart."`, `"<product> is out of stock. Please remove it from your cart."`, or `"<product> is no longer available. Please remove it from your cart."` Send the shopper back to the cart |
 | 429 | `RATE_LIMITED` | Too many checkouts from this IP |
 | 502 | `PAYMENT_FAILED` | `"We couldn't start the payment. Please try again."` Paystack couldn't be reached or refused the request. Nothing was charged, and the cart is unchanged |
@@ -1582,6 +1639,8 @@ One of **your own** orders, with its status history and refunds.
       { "productId": "9c8b7a6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d", "name": "Silver Pocket Mirror", "unitPriceGhs": 6000, "quantity": 1, "lineTotalGhs": 6000, "image": { "url": "https://ik.imagekit.io/ADORN/ADORN/Products/Accessories/pocket-mirror-1.jpg", "altText": "Silver compact pocket mirror" } }
     ],
     "subtotalGhs": 6000,
+    "discountCode": null,
+    "discountGhs": 0,
     "deliveryFeeGhs": 2000,
     "totalGhs": 8000,
     "currency": "GHS",
@@ -1700,8 +1759,10 @@ Loads one order for the **order confirmation page**. The frontend page address i
       }
     ],
     "subtotalGhs": 14000,
+    "discountCode": "ADORN10",
+    "discountGhs": 1400,
     "deliveryFeeGhs": 2000,
-    "totalGhs": 16000,
+    "totalGhs": 14600,
     "currency": "GHS",
     "paymentMethod": "mobile_money",
     "email": "ama@example.com",
@@ -1718,6 +1779,7 @@ Loads one order for the **order confirmation page**. The frontend page address i
 - `status` is one of `Pending`, `Shipped`, `Delivered`, `Cancelled`.
 - `paymentMethod` is always `mobile_money`; show it as "Mobile money".
 - All money is in pesewas.
+- **Discount** *(BE29)*: `discountCode` is the code used (`null` if none) and `discountGhs` what it took off (`0` if none): `totalGhs = subtotalGhs − discountGhs + deliveryFeeGhs`. When there is one, show a line **between Subtotal and Delivery**: "Discount (ADORN10) − GHS 14.00". The same two fields are in `GET /api/orders/:id` and the admin's `GET /api/admin/orders/:id`. Refunds can never exceed `totalGhs` (what was actually paid).
 - **Delivery area** *(BE24)*: `deliveryRegionName` and `deliveryTownName` are where it was sent, saved when the shopper paid (they stay the same even if the store later renames or hides the area, or changes its fee). `deliveryFeeGhs` is the fee that was **charged**. Show:
   - both set: "Delivery to: Accra, Greater Accra";
   - only the region (town `null`): "Delivery to: Greater Accra (other town)";
@@ -2140,6 +2202,110 @@ Show the message, put `currentStock` into the stock field, and let the admin che
 | 404 | `NOT_FOUND` | `"Delivery town not found."` |
 | 409 | `CONFLICT` | `fields.name`: the region already has a town with that name |
 
+#### `GET /api/admin/discount-codes`
+
+*(BE29)* All discount codes, **newest first**, **20 per page** (standard pagination format).
+
+- **Login required:** yes
+- **Admin required:** yes
+- **Query** (optional): `status` = `active`, `scheduled`, `expired`, `used_up` or `off`; `page`
+- The response has `Cache-Control: no-store`.
+
+**200 OK**
+
+```json
+{
+  "items": [
+    {
+      "id": 3,
+      "code": "ADORN10",
+      "type": "percent",
+      "value": 10,
+      "maxDiscountPesewas": 5000,
+      "minSubtotalPesewas": null,
+      "startsOn": null,
+      "endsOn": "2026-12-31",
+      "startsAt": null,
+      "endsAt": "2027-01-01T00:00:00.000Z",
+      "usageLimit": 100,
+      "oncePerCustomer": true,
+      "isActive": true,
+      "timesUsed": 12,
+      "overLimit": false,
+      "status": "active",
+      "createdAt": "2026-10-14T12:00:00.000Z",
+      "updatedAt": "2026-10-14T12:00:00.000Z"
+    }
+  ],
+  "page": 1, "pageSize": 20, "totalItems": 1, "totalPages": 1
+}
+```
+
+- **`type` and `value`:** `percent` with `value` 1–90 (whole percent), or `fixed` with `value` in **pesewas** (100–100000 = GHS 1–1,000). Show `value` as "10%" or "GHS 15.00".
+- **Dates:** `startsOn` / `endsOn` are the **Ghana days** chosen (both included; `null` = no limit). `startsAt` / `endsAt` are the exact moments (`endsAt` is the midnight after `endsOn`).
+- **`status`** (worked out by the server, in this order): `off` (switched off), `scheduled` (starts later), `expired`, `used_up` (`timesUsed` ≥ `usageLimit`), `active`.
+- **`timesUsed`** counts **paid** orders. In rare cases (two shoppers paying at the same moment for the last use) it can go **over** `usageLimit`: then `overLimit` is `true`. Both orders keep their discount, because they paid it. Show a small warning.
+
+**Errors:** 400 for a bad `status` or `page`; 401; 403.
+
+#### `GET /api/admin/discount-codes/:id`
+
+*(BE29)* One code, with its **20 latest redemptions** (paid orders that used it).
+
+- **Login required:** yes · **Admin required:** yes · `Cache-Control: no-store`
+
+**200 OK:** `{ "discountCode": { …the list fields…, "redemptions": [ { "orderId": "3f2a9c1e-…", "orderNumber": "ORD-20261014-K8W82Y", "email": "ama@example.com", "discountGhs": 2050, "redeemedAt": "2026-10-14T12:30:00.000Z" } ] } }`
+
+`orderId` is the order's UUID: link to `/admin/orders/<orderId>`.
+
+**Errors:** 400 bad id; 401; 403; 404 `"Discount code not found."`
+
+#### `POST /api/admin/discount-codes`
+
+*(BE29)* Creates a code.
+
+- **Login required:** yes · **Admin required:** yes
+- **Headers:** `X-Requested-With: XMLHttpRequest`, `Content-Type: application/json`
+
+| Field | Type | Rules |
+|---|---|---|
+| `code` | string | Required. 3–20 letters and digits (spaces at the ends removed); stored **upper-case**; unique (ignoring case) |
+| `type` | string | Required: `"percent"` or `"fixed"` |
+| `value` | number | Required. Percent: 1–90. Fixed: 100–100000 pesewas |
+| `maxDiscountPesewas` | number or null | Optional, **percent codes only**: the most it can take off (1–100000) |
+| `minSubtotalPesewas` | number or null | Optional: the minimum products' subtotal to use it |
+| `startsOn`, `endsOn` | string or null | Optional Ghana days `YYYY-MM-DD`, both included; `endsOn` on or after `startsOn` |
+| `usageLimit` | number or null | Optional: the total number of paid orders that can use it (1–1,000,000) |
+| `oncePerCustomer` | boolean | Default `true`: one paid order per email address (guests too) |
+| `isActive` | boolean | Default `true` |
+
+```json
+{ "code": "ADORN10", "type": "percent", "value": 10, "maxDiscountPesewas": 5000, "endsOn": "2026-12-31", "usageLimit": 100 }
+```
+
+**201 Created:** `{ "discountCode": { … } }` (the same shape as `GET /api/admin/discount-codes/:id`).
+
+**Errors**
+
+| Status | Code | When |
+|---|---|---|
+| 400 | `INVALID_REQUEST` | A field's rules (see `fields`), e.g. `fields.value` "A percent discount must be from 1 to 90.", `fields.maxDiscountPesewas` "A maximum discount only applies to percent codes.", `fields.endsOn` "The end date must be on or after the start date." |
+| 401 / 403 | | Not logged in / not an admin (or no `X-Requested-With`) |
+| 409 | `CONFLICT` | `fields.code`: `"A discount code with this name already exists."` |
+
+#### `PATCH /api/admin/discount-codes/:id`
+
+*(BE29)* Edits a code. Send **only the fields that change** (at least one); `null` clears an optional one (e.g. `{ "endsOn": null }` removes the end date). **Switch a code off** with `{ "isActive": false }`. There's no delete.
+
+- **Login required:** yes · **Admin required:** yes
+- **Headers:** `X-Requested-With: XMLHttpRequest`, `Content-Type: application/json`
+
+**A code that has been used** (`timesUsed` > 0) can't change its `code`, `type` or `value` (409): paid orders describe it. Create a new code instead. Its dates, limits, `oncePerCustomer` and on/off can still change. An unused code can change anything.
+
+**200 OK:** `{ "discountCode": { … } }`
+
+**Errors:** as `POST`, plus `fields._` "Send at least one field to change."; 404 `"Discount code not found."`; 409 `"This code has been used, so its code, type and value can't change. Create a new code instead."`
+
 #### `GET /api/admin/orders`
 
 All orders, **newest first**, **20 per page**, with optional filters.
@@ -2224,6 +2390,8 @@ Everything staff need to handle one order.
       { "productId": "9c8b7a6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d", "name": "Silver Pocket Mirror", "unitPriceGhs": 6000, "quantity": 1, "lineTotalGhs": 6000, "image": { "url": "https://ik.imagekit.io/ADORN/ADORN/Products/Accessories/pocket-mirror-1.jpg", "altText": "Silver compact pocket mirror" } }
     ],
     "subtotalGhs": 6000,
+    "discountCode": null,
+    "discountGhs": 0,
     "deliveryFeeGhs": 2000,
     "totalGhs": 8000,
     "currency": "GHS",
