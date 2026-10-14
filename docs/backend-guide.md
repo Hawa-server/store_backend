@@ -1663,13 +1663,26 @@ PATCH /api/admin/products/1   { "stock": 25, "expectedStock": 15 }
 - **Logging what, not the data.** Each change logs who (admin id), which product, and the **names** of the changed fields, never the values or the request body.
 - **Live changes vs seeding.** `docs/catalogue.md` is still what the **seeders** use. Admin changes are live database changes; re-running the seeders on an empty database rebuilds the catalogue, without the admin's changes.
 
-### The frontend on Vercel, and `TRUST_PROXY_HOPS=2`
+### The frontend on Vercel, and `TRUST_PROXY_HOPS` (live: 4)
 
 The frontend is deployed on Vercel, and its `vercel.json` rewrites `/api/*` to the Render API, so the browser only ever talks to the Vercel site (first-party cookies). Each shopper's request now passes **two proxies** before Express: Vercel, then Render's load balancer.
 
 Rate limits are counted per IP, so Express must find the shopper's real IP. Vercel's docs say it **overwrites** `X-Forwarded-For` with the client's public IP, ignoring anything the browser sent. Render's proxy then **appends** the address it received the request from (Vercel's). So the header arrives as `"<shopper IP>, <Vercel IP>"`. `app.set('trust proxy', 2)` tells Express to trust exactly those two hops, and `req.ip` becomes the shopper's IP. With `1`, it would be Vercel's IP for everyone, and every shopper would share one login limit.
 
 Trusting more hops than really exist is a risk: an extra hop means trusting a value the client can write. That's why the setting is a number per deployment, not "trust everything". Requests that skip Vercel and call `onrender.com` directly can still set their own header (a known limit, noted in the README).
+
+**Update: the live value is 4, measured, not 2.** The two-proxy picture above was the expected one, but a live check showed more. Render puts **Cloudflare** in front of its services (responses carry a `cf-ray` header), and its own load balancers add hops too. So the real chain is: shopper → Vercel → Cloudflare → Render proxies → Express, with **four** addresses added after the shopper's.
+
+How it was measured: every rate-limited response has a `RateLimit-Policy` header with `pk=…`, a fingerprint (SHA-256, first 12 hex characters) of the key the limiter counts by. The test called `POST /api/auth/login` through the Vercel address and compared `pk` with the fingerprint of the tester's own IP:
+
+| `TRUST_PROXY_HOPS` | Key through Vercel | Meaning |
+|---|---|---|
+| missing (1) | a fixed proxy address | every shopper shared one limit |
+| 2 | one of two proxy addresses | still shared (two counters) |
+| 3 | a proxy address (direct calls to Render: the real IP) | Render adds 3 hops; Vercel adds a 4th |
+| **4** | **the real IP**, also with a fake `X-Forwarded-For` | correct: per shopper, and Vercel's overwrite stops faking |
+
+The lesson: proxy counts are infrastructure details that can't be read from the code, so **measure them** (and re-check if the hosting changes) instead of assuming.
 
 ## BE24 — Delivery Fees by Region and Town (extra task)
 
@@ -2074,4 +2087,77 @@ WHERE type = 'passwordReset' ORDER BY id DESC LIMIT 10;
 
 -- Orders kept from deleted accounts
 SELECT o.orderNumber, o.status, u.name AS account FROM Orders o JOIN Users u ON u.id = o.userId WHERE u.deletedAt IS NOT NULL;
+```
+
+## BE28 — Wishlist (extra task)
+
+### What was built and why
+
+Logged-in shoppers can tap ♡ to **save products for later** and see them on a Wishlist page. Guests see the ♡ but are asked to log in (frontend). The task is described in [docs/BE28-wishlist.md](BE28-wishlist.md).
+
+### New endpoints (login required)
+
+| Method and path | What it does |
+|---|---|
+| `GET /api/wishlist?page=` | Saved products with their current price and stock, newest first, 20 per page |
+| `GET /api/wishlist/ids` | Just the saved products' UUIDs (to fill in the ♡ on lists) |
+| `PUT /api/wishlist/:productId` | Save (200 whether new or already saved) |
+| `DELETE /api/wishlist/:productId` | Remove (200 even if it wasn't saved) |
+
+### New table and how it relates
+
+```text
+Users ──< WishlistItems >── Products
+          id, userId (CASCADE), productId (RESTRICT), createdAt
+          UNIQUE (userId, productId)
+```
+
+`WishlistItems` is a **join table**: it connects users and products in a **many-to-many** relationship (one shopper saves many products; one product is saved by many shoppers). It stores only *who* saved *what* and *when*: no price, no stock.
+
+### New or changed files
+
+| File | Purpose |
+|---|---|
+| `migrations/20261014111434-create-wishlist-items.js` | **New.** The table and its UNIQUE index |
+| `models/WishlistItem.js` | **New** model (no `updatedAt`: a saved item never changes) |
+| `services/wishlist/wishlist.service.js` | **New.** List, ids, save, remove; the 100 limit |
+| `controllers/wishlist.controller.js`, `routes/wishlist.routes.js` | **New.** The four routes behind `router.use(requireAuth)` |
+| `middleware/rateLimits.js` | `wishlistLimiter`: 60 changes per 15 minutes **per user** |
+| `services/account/deleteAccount.service.js` | Deleting an account also deletes its wishlist (BE27) |
+
+### How a request flows (saving)
+
+```text
+PUT /api/wishlist/6b1f0c2e-…
+  → csrfCheck → requireAuth (router.use) → wishlistLimiter (per user) → validate (UUID or null)
+  → wishlist.controller.save → wishlist.service.saveProduct
+      product exists and is active?            no → 404 "Product not found."
+      transaction:
+        lock the user's row                    (this shopper's saves take turns)
+        already saved?                         yes → nothing to do
+        count ≥ 100?                           yes → 409 WISHLIST_FULL
+        INSERT WishlistItems (userId, productId)
+      COMMIT   (a UNIQUE clash here = already saved → still 200)
+  ← 200 { productId, saved: true, count }
+```
+
+### Key concepts
+
+- **`PUT` and `DELETE` are idempotent.** "Make sure this product IS / ISN'T in my wishlist" gives the same result however many times it's sent, so a double tap or a retried request never causes an error. That's why saving twice and removing twice both answer 200.
+- **Two layers against duplicates.** The service checks first; the **UNIQUE (userId, productId)** index is the backstop if two taps arrive at the same instant. Its error is caught and treated as success, never a 500. (Tested: two taps at once → 200, 200, one row.)
+- **A limit that holds under pressure.** "Count, then insert" has a gap: two saves at 99 could both see 99 and make 101. Locking the shopper's **user row** first makes their saves take turns, so the count is always current. (Tested: 5 saves at once from 98 → 2 saved, 3 refused, exactly 100.)
+- **Live data, not copies.** The wishlist stores no price, so it always shows today's price and stock, like the cart. A product removed from the shop isn't deleted (orders need it), so it stays in the list with `isActive: false` and the shopper sees why it can't be bought.
+- **Ownership by construction.** Every query has `where: { userId: req.user.id }`; there's no way to name another shopper's list in a request.
+- **Rate limit per user** (after `requireAuth`), only on changes: reading the list is never limited.
+- **CASCADE vs soft delete.** The foreign key would delete wishlist rows if a user row were deleted, but BE27 keeps the user row as a shell, so the deletion service removes the wishlist itself, inside the same transaction.
+- **Migration order.** This migration is named with the real date (`20261014…`), so it sorts before the three later-dated BE25–BE27 migrations. It still runs, because it only needs the Users and Products tables. One side effect: `db:migrate:undo` (without `--name`) undoes the migration with the **latest name**, not the latest one run; to undo this one, use `npx sequelize-cli db:migrate:undo --name 20261014111434-create-wishlist-items.js`.
+
+### Check it yourself in MySQL Workbench
+
+```sql
+-- Who saved what (newest first)
+SELECT w.userId, p.name, p.isActive, w.createdAt FROM WishlistItems w JOIN Products p ON p.id = w.productId ORDER BY w.createdAt DESC LIMIT 20;
+
+-- The most-wished products
+SELECT p.name, COUNT(*) AS saves FROM WishlistItems w JOIN Products p ON p.id = w.productId GROUP BY p.id ORDER BY saves DESC LIMIT 10;
 ```

@@ -13,7 +13,7 @@
  *   Orders       kept, with their delivery details, still on the shell
  *   Reviews      deleted (they showed the shopper's name; ratings update
  *                automatically, because they're always calculated)
- *   Cart, EmailTokens  deleted
+ *   Cart, EmailTokens, Wishlist (BE28)  deleted
  *
  * Refused for admins (the store must never lose its last admin by accident),
  * and while anything is still in progress (orders not yet delivered or
@@ -22,7 +22,7 @@
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const { Op } = require('sequelize');
-const { sequelize, User, Order, Checkout, Review, Cart, EmailToken } = require('../../models');
+const { sequelize, User, Order, Checkout, Review, Cart, EmailToken, WishlistItem } = require('../../models');
 const AppError = require('../../utils/AppError');
 const withDeadlockRetry = require('../../utils/withDeadlockRetry');
 // Used as emailService.sendEmailSafely(...) (not destructured), so tests can replace it.
@@ -77,6 +77,9 @@ async function deleteAccount(userId, password) {
       await Review.destroy({ where: { userId }, transaction });
       await Cart.destroy({ where: { userId }, transaction }); // cart lines go with it (ON DELETE CASCADE)
       await EmailToken.destroy({ where: { userId }, transaction });
+      // The user row is kept (a shell), so the CASCADE never fires: delete
+      // the wishlist here (BE28).
+      await WishlistItem.destroy({ where: { userId }, transaction });
 
       await user.update(
         {

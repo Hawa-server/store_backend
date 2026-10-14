@@ -57,4 +57,7 @@ module.exports = {
   // Deleting an account (BE27): counted per USER, not per IP, because it
   // guards a password check for one account. Must come after requireAuth.
   deleteAccountLimiter: createLimiter({ windowMinutes: 15, limit: 5, keyGenerator: (req) => `user:${req.user.id}` }),
+  // Wishlist saves and removals (BE28), per USER (after requireAuth): plenty
+  // for real use, but stops a script hammering the database.
+  wishlistLimiter: createLimiter({ windowMinutes: 15, limit: 60, keyGenerator: (req) => `wishlist:${req.user.id}` }),
 };

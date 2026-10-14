@@ -15,7 +15,7 @@ This document is the contract between the backend and the React frontend. Every 
 
 All endpoint paths start with `/api`.
 
-**Recommended in production: call the API through your frontend's own domain.** The frontend and the API will be on different sites (for example `…vercel.app` and `…onrender.com`). The login and cart cookies are then "third-party" cookies (`Secure; SameSite=None`), which **Safari and some privacy settings block**, so logins would silently not stick. The fix, used by the deployed frontend: Vercel's `vercel.json` **rewrites** `/api/*` to the Render address (locally, the Vite dev server `proxy` does the same), and the frontend calls the API with relative URLs such as `fetch('/api/products')`. The cookies then belong to the frontend's own domain and work everywhere. (The backend is configured for this with `TRUST_PROXY_HOPS=2`; see the README.)
+**Recommended in production: call the API through your frontend's own domain.** The frontend and the API will be on different sites (for example `…vercel.app` and `…onrender.com`). The login and cart cookies are then "third-party" cookies (`Secure; SameSite=None`), which **Safari and some privacy settings block**, so logins would silently not stick. The fix, used by the deployed frontend: Vercel's `vercel.json` **rewrites** `/api/*` to the Render address (locally, the Vite dev server `proxy` does the same), and the frontend calls the API with relative URLs such as `fetch('/api/products')`. The cookies then belong to the frontend's own domain and work everywhere. (The backend is configured for this with `TRUST_PROXY_HOPS=4`; see the README.)
 
 ### Requests from the browser
 
@@ -114,6 +114,7 @@ Every error response has this shape:
 | `EMAIL_NOT_VERIFIED` | 403 | Correct password, but the email address hasn't been verified yet |
 | `NOT_FOUND` | 404 | The resource or route doesn't exist (or isn't yours) |
 | `CONFLICT` | 409 | Duplicate, or the resource is in the wrong state |
+| `WISHLIST_FULL` | 409 | *(BE28)* The wishlist already has 100 products |
 | `ORDERS_IN_PROGRESS` | 409 | *(BE27)* The account can't be deleted yet: an order is Pending or Shipped, or a payment is in progress |
 | `RESET_LINK_INVALID` | 400 | *(BE27)* The password reset link is unknown, already used, replaced by a newer one, or older than 30 minutes |
 | `OUT_OF_STOCK` | 409 | Not enough stock |
@@ -685,6 +686,117 @@ A "Your Adorn account has been deleted" email is sent to the address the account
 | 429 | `RATE_LIMITED` | More than 5 attempts in 15 minutes |
 
 **For the frontend:** put it on the account page under "Delete account", explain what's kept and what's removed (the table above), and ask for the password and for the user to type DELETE. After the 200, clear any saved user state and go to the home page.
+
+### Wishlist
+
+*(BE28)* Logged-in shoppers save products for later (♡). **All four endpoints need a login** (401 `UNAUTHENTICATED` otherwise). **Guests:** show the ♡ anyway, and when it's tapped, ask them to log in.
+
+- Products are identified by their **UUID** (`productId`, the product's `id` everywhere else).
+- A product is saved **once**: saving it again changes nothing.
+- At most **100** products.
+- Nothing is reserved: the list always shows the product's **current** price and stock.
+- **Rate limit** for saving and removing (not reading): 60 per 15 minutes per user.
+- Deleting the account deletes the wishlist.
+
+#### `GET /api/wishlist`
+
+The shopper's saved products, **newest saves first**, **20 per page** (standard pagination format).
+
+- **Login required:** yes
+- **Query:** `page` (optional, default 1)
+- The response has `Cache-Control: no-store`.
+
+**200 OK**
+
+```json
+{
+  "items": [
+    {
+      "productId": "6b1f0c2e-8d4a-4f7b-9e21-3a5c7d9e1f40",
+      "name": "Black Canvas Tote Bag",
+      "priceGhs": 12000,
+      "priceUsd": 774,
+      "stock": 15,
+      "stockLabel": "In stock",
+      "isActive": true,
+      "category": { "name": "Bags", "slug": "bags" },
+      "mainImage": { "url": "https://ik.imagekit.io/ADORN/ADORN/Products/Bags/black-tote-bag-1.jpg", "altText": "Black canvas tote bag" },
+      "savedAt": "2026-10-14T11:20:05.000Z"
+    }
+  ],
+  "page": 1,
+  "pageSize": 20,
+  "totalItems": 1,
+  "totalPages": 1
+}
+```
+
+- `isActive: false` means the product was **removed from the shop** after it was saved. It stays in the list so the shopper understands: show it greyed out as "No longer available", without an "Add to cart" button, and with **Remove**. (Its product page answers 404.)
+- `stock` 0 / `stockLabel` work like on product cards: show "Out of stock" and disable "Add to cart".
+- `priceGhs` is pesewas; `priceUsd` is US cents (display only).
+
+**Errors:** 400 for a bad `page`; 401 not logged in.
+
+#### `GET /api/wishlist/ids`
+
+Just the saved products' UUIDs (at most 100), to fill in the ♡ on product lists and pages without loading the whole wishlist.
+
+- **Login required:** yes. (For guests, don't call it: all hearts are empty.)
+- The response has `Cache-Control: no-store`.
+
+**200 OK**
+
+```json
+{ "productIds": ["6b1f0c2e-8d4a-4f7b-9e21-3a5c7d9e1f40", "0d8e2a41-5b6c-4e7f-8a9b-1c2d3e4f5a60"] }
+```
+
+Load it once after login (and after each change, or update it from the `PUT`/`DELETE` answers), then show ♥ for products whose `id` is in the list.
+
+**Errors:** 401 not logged in.
+
+#### `PUT /api/wishlist/:productId`
+
+Saves a product. **The same answer whether it was just saved or already saved**, so a double tap is harmless.
+
+- **Login required:** yes
+- **Headers:** `X-Requested-With: XMLHttpRequest`
+- **Request body:** none
+- **Rate limit:** 60 saves and removals per 15 minutes per user
+
+**200 OK**
+
+```json
+{ "productId": "6b1f0c2e-8d4a-4f7b-9e21-3a5c7d9e1f40", "saved": true, "count": 3 }
+```
+
+`count` is how many products are saved now (e.g. for a badge on a "Wishlist" link).
+
+**Errors**
+
+| Status | Code | Message / when |
+|---|---|---|
+| 401 | `UNAUTHENTICATED` | Not logged in: ask the guest to log in |
+| 403 | `FORBIDDEN` | The `X-Requested-With` header is missing |
+| 404 | `NOT_FOUND` | `"Product not found."` Unknown, removed from the shop, or `:productId` isn't a product UUID |
+| 409 | `WISHLIST_FULL` | `"Your wishlist is full. Remove something to add more."` (100 products) |
+| 429 | `RATE_LIMITED` | Too many changes |
+
+#### `DELETE /api/wishlist/:productId`
+
+Removes a product. **200 even if it wasn't saved** (the result is the same: it isn't in the wishlist).
+
+- **Login required:** yes
+- **Headers:** `X-Requested-With: XMLHttpRequest`
+- **Request body:** none
+- **Rate limit:** shared with `PUT` (60 per 15 minutes per user)
+
+**200 OK**
+
+```json
+{ "productId": "6b1f0c2e-8d4a-4f7b-9e21-3a5c7d9e1f40", "saved": false, "count": 2 }
+```
+
+**Errors:** 401 not logged in; 403 without the `X-Requested-With` header; 429 too many changes.
 
 ### Settings
 
