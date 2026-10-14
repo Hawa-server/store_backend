@@ -33,14 +33,17 @@ const adminRoutes = require('./routes/admin.routes');
 const reviewsRoutes = require('./routes/reviews.routes');
 const deliveryRoutes = require('./routes/delivery.routes');
 const accountRoutes = require('./routes/account.routes');
+const wishlistRoutes = require('./routes/wishlist.routes');
 
 const app = express();
 
-// Requests reach us through proxies: Render's load balancer (1 hop), plus the
-// frontend host if it forwards /api to us (2 hops). Trusting exactly that many
-// lets req.ip be the real visitor's IP, which rate limiting needs (otherwise
-// everyone shares one IP and one limit). Trusting MORE hops than really exist
-// would let visitors fake their IP, so it's set per deployment (default 1).
+// Requests reach us through proxies, each adding an address to
+// X-Forwarded-For. Trusting exactly that many hops lets req.ip be the real
+// visitor's IP, which rate limiting needs (otherwise everyone shares one IP
+// and one limit). Trusting MORE hops than really exist would let visitors
+// fake their IP, so it's set per deployment (default 1). Live, measured with
+// the rate-limit headers: 4 (Vercel's /api rewrite, then Cloudflare and two
+// Render proxies in front of the app).
 app.set('trust proxy', Number(process.env.TRUST_PROXY_HOPS) || 1);
 
 // Security headers (e.g. stop browsers guessing content types, block framing).
@@ -80,6 +83,7 @@ app.use(cookieParser());
 app.use('/api/health', healthRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/account', accountRoutes);
+app.use('/api/wishlist', wishlistRoutes);
 app.use('/api/categories', categoriesRoutes);
 app.use('/api/products', productsRoutes);
 app.use('/api/cart', cartRoutes);

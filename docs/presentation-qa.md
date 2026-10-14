@@ -53,7 +53,7 @@ No. Every query includes the logged-in user's id (`where: { id, userId }`). Some
 - Wrong guesses are counted even though the request returns an error: the counter is saved first, then the error is thrown. **[BE12]**
 
 **Q: Why rate limits? What is `TRUST_PROXY_HOPS`?**
-Rate limits slow down password guessing and spam (for example, 10 logins per 15 minutes per IP). On Render, requests pass through proxies, so Express must trust **exactly** that many hops to read the visitor's real IP. If it trusted too few, everyone would share one limit; too many, and visitors could fake their IP. **[BE22]**
+Rate limits slow down password guessing and spam (for example, 10 logins per 15 minutes per IP). On Render, requests pass through proxies, so Express must trust **exactly** that many hops to read the visitor's real IP. If it trusted too few, everyone would share one limit; too many, and visitors could fake their IP. Live it's **4** (Vercel, then Cloudflare and Render's proxies). I didn't guess it: I measured it with the `pk` fingerprint in the `RateLimit-Policy` header, raising the number until the key was my own IP and a fake `X-Forwarded-For` header no longer changed it. **[BE22, re-checked after BE28]**
 
 **Q: What do you never show in errors?**
 SQL, stack traces, password hashes, tokens and secrets. Every error has the same shape: `{ error: { code, message, fields? } }`. Unexpected errors are logged on the server, and the user only sees "Something went wrong".

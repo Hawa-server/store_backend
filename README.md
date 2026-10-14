@@ -93,7 +93,7 @@ npx sequelize-cli db:seed:undo:all      # remove all seeded data
 | `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD` | The MySQL connection. Locally, `127.0.0.1` is more reliable than `localhost` |
 | `DB_SSL` | `false` locally; `true` for Aiven |
 | `DB_CA_CERT` | Aiven's CA certificate (the whole text). Only used when `DB_SSL=true`. Line breaks may be written as `\n` |
-| `TRUST_PROXY_HOPS` | How many proxies sit in front of the API, so rate limits see each shopper's real IP. **Production: `2`** (Vercel's rewrite + Render's proxy, see "Frontend on Vercel" below). `1` = Render only. Leave it out locally (it defaults to 1) |
+| `TRUST_PROXY_HOPS` | How many proxies sit in front of the API, so rate limits see each shopper's real IP. **Production: `4`** (Vercel's rewrite, then 3 proxies at Render, see "Frontend on Vercel" below). Leave it out locally (it defaults to 1) |
 | `CLIENT_URL` | The frontend's address (the only origin CORS allows). It's also used in email links |
 | `JWT_SECRET` | A long random secret for login tokens. Generate one with `node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"`. Use a **different** one in production |
 | `JWT_EXPIRES_IN` | How long a login lasts (`1d`) |
@@ -138,6 +138,10 @@ The delivery fee depends on the region and town the shopper chooses at checkout:
 
 A fee change only affects **new** checkouts: every order keeps the fee and area it was charged, in its emails and refunds too.
 
+### Wishlist
+
+Logged-in shoppers can save up to **100 products** for later (`/api/wishlist`, see [docs/api.md](docs/api.md)). Saving twice keeps one copy; the list always shows the **current** price and stock; products removed from the shop stay in the list marked unavailable. Guests see the ♡ but are asked to log in. Deleting the account deletes its wishlist.
+
 ### Forgot password and deleting an account
 
 - **Forgot password:** the shopper asks for a link (`POST /api/auth/forgot-password`); the answer is the same whether or not the email has an account. The emailed link works **once, for 30 minutes**, and a newer link cancels older ones. Setting a new password (`POST /api/auth/reset-password`) **logs the account out on every device** and sends a "password changed" email. In development, the reset link is also printed in the server console.
@@ -153,7 +157,7 @@ Someone who pays **as a guest** and later creates an account with the **same ema
 
 ### Postman
 
-Import [docs/postman_collection.json](docs/postman_collection.json) into Postman. It has every endpoint, grouped as Health, Auth, Account, Products, Cart, Delivery areas, Checkout, Orders, Reviews, Admin and Webhooks. The variables `deliveryRegionId` and `deliveryTownId` (both 1: Ashanti, Kumasi) are used by Checkout and the admin delivery requests.
+Import [docs/postman_collection.json](docs/postman_collection.json) into Postman. It has every endpoint, grouped as Health, Auth, Account, Products, Cart, Wishlist, Delivery areas, Checkout, Orders, Reviews, Admin and Webhooks. The variables `deliveryRegionId` and `deliveryTownId` (both 1: Ashanti, Kumasi) are used by Checkout and the admin delivery requests.
 
 - Set the collection variable **`baseUrl`**: `http://localhost:5000` locally, or your Render address.
 - Run **Auth → Log in** first. Postman keeps the login cookie for the rest. For the Admin folder, change the `email` and `password` variables to your admin account.
@@ -228,7 +232,7 @@ Commit and push the project. Check first that `.env` is **not** included: `git s
    - the Aiven `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER` and `DB_PASSWORD`;
    - a **new** `JWT_SECRET`, and a strong `ADMIN_PASSWORD`;
    - `CLIENT_URL` = the frontend's **Vercel** address, e.g. `https://<your-app>.vercel.app` (no slash at the end). It's used for CORS, the Paystack return page and the links in emails;
-   - `TRUST_PROXY_HOPS=2` (shoppers reach the API through Vercel, then Render);
+   - `TRUST_PROXY_HOPS=4` (shoppers reach the API through Vercel, then Cloudflare and Render's own proxies; see step 7);
    - the Paystack test key, `BREVO_API_KEY`, `EMAIL_FROM_NAME` and `EMAIL_FROM_ADDRESS` (delete any old `SMTP_*` and `EMAIL_FROM` variables), the store contact details and `LOGIN_CODE_ENABLED`.
 
    Don't set `PORT`; Render provides it.
@@ -276,12 +280,13 @@ shopper's browser ──► https://<your-app>.vercel.app/api/products
 
 Why this matters:
 - **Cookies are first-party.** The login and cart cookies belong to the Vercel domain, so they work in every browser. Safari and some privacy settings block cookies from a *different* site, which is what happens if the frontend calls `onrender.com` directly.
-- **Rate limits need `TRUST_PROXY_HOPS=2` on Render.** Each request passes through **two** proxies: Vercel, then Render's own. Vercel puts the shopper's real IP in the `X-Forwarded-For` header. It overwrites any value the browser sends, so it can't be faked through Vercel (see [Vercel's request headers docs](https://vercel.com/docs/headers/request-headers)). Render then adds Vercel's IP. With `2`, Express reads the shopper's IP; with `1`, every shopper would appear as Vercel and share **one** limit (for example 10 logins per 15 minutes for the whole shop).
+- **Rate limits need `TRUST_PROXY_HOPS=4` on Render.** Each shopper's request passes **four** proxies before Express: Vercel, then three at Render (Cloudflare, which Render uses in front of its services, and Render's own load balancers). Each one adds an address to the `X-Forwarded-For` header. Vercel puts the shopper's real IP first and **overwrites** any value the browser sends, so it can't be faked through Vercel (see [Vercel's request headers docs](https://vercel.com/docs/headers/request-headers)). With `4`, Express reads the shopper's IP; with fewer, it reads a proxy's address and every shopper shares **one** limit (for example 10 logins per 15 minutes for the whole shop).
+- **How 4 was found (and how to re-check it):** the rate-limited endpoints send a `RateLimit-Policy` header whose `pk` value is a fingerprint (first 12 hex characters of SHA-256) of the key being counted. Calling `POST /api/auth/login` through the Vercel address and comparing `pk` with the fingerprint of your own IP shows whether the server sees you; adding a fake `X-Forwarded-For` header must not change it. With 1, 2 and 3 the key was a proxy's address; with 4 it was the real IP, and fake headers were ignored. If Render or Vercel ever change their setup, repeat this check.
 - **Set `CLIENT_URL`** on Render to the Vercel address, so CORS accepts the frontend, Paystack returns shoppers to `/checkout/complete` on Vercel, and email links open the Vercel site.
 
 After changing `TRUST_PROXY_HOPS` or `CLIENT_URL` on Render, save; Render redeploys.
 
-**Known limit:** the Render address is still public, and with `2` trusted hops, someone who calls `onrender.com` **directly** (not through Vercel) could send their own `X-Forwarded-For` header and choose the IP the rate limiter sees. Shoppers always come through Vercel, so this only matters for deliberate abuse. Blocking direct access would need a secret header added by the proxy, which is beyond this project. Paystack's webhooks call Render directly and aren't affected: the webhook isn't rate-limited, and it's protected by its signature instead.
+**Known limit:** the Render address is still public, and with `4` trusted hops, someone who calls `onrender.com` **directly** (not through Vercel) could send their own `X-Forwarded-For` header and choose the IP the rate limiter sees. Shoppers always come through Vercel, so this only matters for deliberate abuse. Blocking direct access would need a secret header added by the proxy, which is beyond this project. Paystack's webhooks call Render directly and aren't affected: the webhook isn't rate-limited, and it's protected by its signature instead.
 
 ### 8. Releasing a change that needs the frontend too (BE24: delivery areas)
 BE24 changes `POST /api/checkout`: it now **requires** `deliveryRegionId`. A frontend without the region and town picker would get a 400 at every checkout. So the backend and frontend go live together, in this order:
