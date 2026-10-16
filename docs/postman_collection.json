@@ -544,6 +544,23 @@
               ]
             }
           }
+        },
+        {
+          "name": "Announcement bar",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/announcement",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "announcement"
+              ]
+            }
+          }
         }
       ]
     },
@@ -1744,6 +1761,60 @@
             "body": {
               "mode": "raw",
               "raw": "{\n  \"isActive\": false\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Announcement (admin view)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/announcement",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "announcement"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Save announcement",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Requested-With",
+                "value": "XMLHttpRequest"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/announcement",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "admin",
+                "announcement"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"enabled\": true,\n  \"message\": \"Use ADORN10 for 10% off your order\",\n  \"codeId\": {{discountCodeId}},\n  \"endsAt\": null\n}",
               "options": {
                 "raw": {
                   "language": "json"

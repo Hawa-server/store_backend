@@ -57,6 +57,22 @@ function describe(code, discount) {
 }
 
 /*
+ * statusOf(code, now)
+ * Receives: a DiscountCode and the current time.
+ * Returns: 'off' | 'scheduled' | 'expired' | 'used_up' | 'active', in that order
+ *          of priority (an expired code that was also switched off shows "off").
+ *          Only 'active' codes can be used. Shared by the admin list (BE29)
+ *          and the announcement bar (BE30), so they always agree.
+ */
+function statusOf(code, now = new Date()) {
+  if (!code.isActive) return 'off';
+  if (code.startsAt && now < code.startsAt) return 'scheduled';
+  if (code.endsAt && now >= code.endsAt) return 'expired';
+  if (code.usageLimit !== null && code.timesUsed >= code.usageLimit) return 'used_up';
+  return 'active';
+}
+
+/*
  * invalid(message)
  * Receives: the reason to show. Returns: the 400 DISCOUNT_INVALID error.
  */
@@ -99,4 +115,4 @@ async function checkCode(text, subtotal, { email, transaction } = {}) {
   return { code, discount, message: describe(code, discount) };
 }
 
-module.exports = { normalizeCode, normalizeEmail, calculateDiscount, checkCode, describe };
+module.exports = { normalizeCode, normalizeEmail, calculateDiscount, checkCode, describe, statusOf };

@@ -2247,3 +2247,60 @@ FROM DiscountRedemptions r JOIN DiscountCodes d ON d.id = r.discountCodeId JOIN 
 -- Every order adds up: total = subtotal − discount + delivery (should return no rows)
 SELECT orderNumber FROM Orders WHERE total <> subtotal - discountPesewas + deliveryFee;
 ```
+
+## BE30 — Announcement Bar (extra task)
+
+### What was built and why
+
+A thin bar at the top of every shop page with one short message, usually promoting a discount code ("Use WELCOME5 for 5% off your first order"). The admin switches it on and off, writes the message, and can link one code from BE29. The task is described in [docs/BE30-announcement-bar.md](BE30-announcement-bar.md).
+
+### New endpoints
+
+| Method and path | Who | What it does |
+|---|---|---|
+| `GET /api/announcement` | Anyone | `{ message, code, id }`, or `null` when nothing should show (cached 60 s) |
+| `GET /api/admin/announcement` | Admin | The saved settings, the linked code's status, and `isShowing` with the reason |
+| `PUT /api/admin/announcement` | Admin | Saves the whole announcement (on/off, message, code, end day) |
+
+### Data: no new table
+
+Four keys in the existing **Settings** table (key/value, both text): `announcementEnabled`, `announcementMessage`, `announcementCodeId`, `announcementEndsAt`. Only `settings.service.js` touches them: it turns `"true"` into `true`, `"7"` into `7` and `""` into `null`, and saves all four in one transaction. A key that doesn't exist yet means "off", so **no seeder or migration** was needed (the live database just starts without them).
+
+### New or changed files
+
+| File | Purpose |
+|---|---|
+| `services/announcement/announcement.service.js` | **New.** When to show it, the `id`, the admin view and saving rules |
+| `controllers/announcement.controller.js`, `routes/announcement.routes.js` | **New.** The public endpoint |
+| `validators/announcement.validators.js` | **New.** Message 5–120 characters on one line; code id; end day |
+| `services/settings/settings.service.js` | `getAnnouncementSettings` / `saveAnnouncementSettings` (text ↔ real values) |
+| `services/discount/discount.service.js` | `statusOf` moved here from the admin service, so codes and the bar share one rule |
+| `controllers/admin.controller.js`, `routes/admin.routes.js` | The two admin routes |
+
+### How a request flows (a shopper's page loads)
+
+```text
+GET /api/announcement
+  → announcement.controller.get → announcement.service.publicAnnouncement
+      settings.service.getAnnouncementSettings      (4 text values → enabled, message, codeId, endsAt)
+      DiscountCode.findByPk(codeId)                  (if a code is linked)
+      evaluate: on? message? code's status === 'active'? (or, without a code: before the end day's next midnight?)
+      id = first 12 hex characters of SHA-256(message + code)
+  ← 200 { announcement: { message, code, id } }  or  { announcement: null }
+     Cache-Control: public, max-age=60
+```
+
+### Key concepts
+
+- **One rule, shared.** "Can this code be used?" is BE29's `statusOf` (off, scheduled, expired, used up, active). The bar shows only when it says `active`, the same check checkout makes, so the bar can never advertise a code that fails at checkout. That's why `statusOf` moved into `discount.service.js`.
+- **Hides itself.** Nothing is stored about whether the bar is visible: it's **worked out on every request** from the settings, the code and the clock. When a code expires at midnight, the bar disappears at midnight (plus up to a minute of cache), with no job or admin action.
+- **A version id for "closed".** The frontend remembers the `id` of a bar the shopper closed. The id is a short hash of the message and code, so it stays the same while the announcement does, and changes when the admin writes a new one: the shopper sees new announcements again.
+- **Caching the public answer.** Every page asks for the bar, so `Cache-Control: public, max-age=60` lets browsers reuse the answer for a minute. The trade-off is that a change takes up to a minute to appear.
+- **Plain text, not HTML (XSS).** A message shown on every page is a tempting place to inject a `<script>`. The server stores and returns it exactly as typed, and the frontend shows it as **text** (React does this by default), so `<script>` is just characters. Escaping it on the server instead would make shoppers see `&lt;`, so safe display is the frontend's job, and `docs/api.md` says so.
+- **Conversions belong in one place.** The Settings table only stores text, so the settings service is the only code that knows `"true"` means `true` and `""` means "none". Routes and other services always get real values.
+
+### Check it yourself in MySQL Workbench
+
+```sql
+SELECT `key`, value, updatedAt FROM Settings WHERE `key` LIKE 'announcement%';
+```

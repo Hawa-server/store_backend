@@ -10,8 +10,12 @@
  *                      area (services/delivery). Kept in the table for old seeds.
  *   usdRate            GHS per 1 USD, display only             used by BE13 (currency)
  *   lowStockThreshold  whole number                            used by BE20
+ *   announcement…      the announcement bar (BE30): enabled, message, the
+ *                      linked discount code's id, and an end day. Missing
+ *                      keys mean "off" (they're created the first time the
+ *                      admin saves), so no seeder is needed.
  */
-const { Setting } = require('../../models');
+const { sequelize, Setting } = require('../../models');
 
 /*
  * getSetting(key)
@@ -89,4 +93,62 @@ async function setLowStockThreshold(value) {
   return value;
 }
 
-module.exports = { getSetting, getDeliveryFee, getUsdRate, getLowStockThreshold, setLowStockThreshold };
+
+// The announcement bar's four keys (BE30), and their values when not set yet.
+const ANNOUNCEMENT_KEYS = {
+  enabled: 'announcementEnabled',
+  message: 'announcementMessage',
+  codeId: 'announcementCodeId',
+  endsAt: 'announcementEndsAt',
+};
+
+/*
+ * getAnnouncementSettings()
+ * Receives: nothing.
+ * Returns: { enabled (boolean), message (string), codeId (number or null),
+ *          endsAt ('YYYY-MM-DD' or null) }. The Settings table stores text,
+ *          so this is where "true", "12" or "" become real values. A key that
+ *          doesn't exist yet counts as its default (off, empty), instead of
+ *          throwing like the older settings: the bar is optional.
+ */
+async function getAnnouncementSettings() {
+  const rows = await Setting.findAll({ where: { key: Object.values(ANNOUNCEMENT_KEYS) } });
+  const text = Object.fromEntries(rows.map((row) => [row.key, row.value]));
+  const codeId = Number(text[ANNOUNCEMENT_KEYS.codeId]);
+  const endsAt = text[ANNOUNCEMENT_KEYS.endsAt];
+  return {
+    enabled: text[ANNOUNCEMENT_KEYS.enabled] === 'true',
+    message: text[ANNOUNCEMENT_KEYS.message] || '',
+    codeId: Number.isInteger(codeId) && codeId > 0 ? codeId : null,
+    endsAt: /^\d{4}-\d{2}-\d{2}$/.test(endsAt || '') ? endsAt : null,
+  };
+}
+
+/*
+ * saveAnnouncementSettings({ enabled, message, codeId, endsAt })
+ * Receives: already validated values (see announcement.service.js).
+ * Returns: nothing. Saves all four as text, in ONE transaction (all or none),
+ *          creating any key that doesn't exist yet.
+ */
+async function saveAnnouncementSettings({ enabled, message, codeId, endsAt }) {
+  const values = {
+    [ANNOUNCEMENT_KEYS.enabled]: enabled ? 'true' : 'false',
+    [ANNOUNCEMENT_KEYS.message]: message || '',
+    [ANNOUNCEMENT_KEYS.codeId]: codeId ? String(codeId) : '',
+    [ANNOUNCEMENT_KEYS.endsAt]: endsAt || '',
+  };
+  await sequelize.transaction(async (transaction) => {
+    for (const [key, value] of Object.entries(values)) {
+      const [updated] = await Setting.update({ value }, { where: { key }, transaction });
+      if (!updated) {
+        const exists = await Setting.findOne({ where: { key }, attributes: ['id'], transaction });
+        if (!exists) await Setting.create({ key, value }, { transaction });
+      }
+    }
+  });
+}
+
+module.exports = {
+  getSetting, getDeliveryFee, getUsdRate, getLowStockThreshold, setLowStockThreshold,
+  getAnnouncementSettings, saveAnnouncementSettings,
+};

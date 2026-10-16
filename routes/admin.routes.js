@@ -21,6 +21,7 @@ const {
 const {
   createDiscountBody, updateDiscountBody, discountListQuery, discountIdParams,
 } = require('../validators/discount.validators');
+const { announcementBody } = require('../validators/announcement.validators');
 const {
   adminReviewsQuery, moderationReasonBody, unhideBody, reviewIdParams,
 } = require('../validators/review.validators');
@@ -50,6 +51,10 @@ router.get('/discount-codes', validate({ query: discountListQuery }), controller
 router.get('/discount-codes/:id', validate({ params: discountIdParams }), controller.getDiscountCode);
 router.post('/discount-codes', validate({ body: createDiscountBody }), controller.createDiscountCode);
 router.patch('/discount-codes/:id', validate({ params: discountIdParams, body: updateDiscountBody }), controller.updateDiscountCode);
+
+// Announcement bar (BE30): read it, or replace it (on/off, message, code, end day).
+router.get('/announcement', controller.getAnnouncement);
+router.put('/announcement', validate({ body: announcementBody }), controller.saveAnnouncement);
 
 router.get('/orders', validate({ query: adminOrdersQuery }), controller.listOrders);
 router.get('/orders/:id', validate({ params: orderIdParams }), controller.getOrder);

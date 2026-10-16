@@ -144,6 +144,10 @@ The admin creates codes such as `ADORN10` (`/api/admin/discount-codes`): **perce
 
 **To try it on the live site:** create `ADORN10` as the admin (Postman: Admin → Create discount code), then pay a test order with it.
 
+### Announcement bar
+
+The admin can show one short message at the top of every shop page (`PUT /api/admin/announcement`), usually with a discount code: "Use ADORN10 for 10% off". With a code linked, the bar **hides itself** whenever the code can't be used (switched off, not started, expired or used up), so shoppers never see a code that fails at checkout. Without a code, an optional end day applies. The message is plain text (HTML is shown as characters, never run). Settings are stored in the Settings table; nothing needs seeding. Changes can take up to a minute to appear (the public answer is cached for 60 seconds).
+
 ### Wishlist
 
 Logged-in shoppers can save up to **100 products** for later (`/api/wishlist`, see [docs/api.md](docs/api.md)). Saving twice keeps one copy; the list always shows the **current** price and stock; products removed from the shop stay in the list marked unavailable. Guests see the ♡ but are asked to log in. Deleting the account deletes its wishlist.
@@ -330,7 +334,7 @@ To restore, if ever needed: `mysql --host=… --port=… --user=… -p --ssl-mod
 - [docs/api.md](docs/api.md): every endpoint, for the frontend (requests, responses, errors).
 - [docs/backend-guide.md](docs/backend-guide.md): a study guide explaining how and why each part was built.
 - [docs/backend-plan.md](docs/backend-plan.md): the build plan (tasks BE1–BE22).
-- The extra tasks added after the plan: [BE23 product management](docs/BE23-product-management.md), [BE24 delivery zones](docs/BE24-delivery-zones.md), [BE25 linking guest orders](docs/BE25-link-guest-orders.md), [BE26 order UUIDs](docs/BE26-order-public-ids.md).
+- The extra tasks added after the plan: [BE23 product management](docs/BE23-product-management.md), [BE24 delivery zones](docs/BE24-delivery-zones.md), [BE25 linking guest orders](docs/BE25-link-guest-orders.md), [BE26 order UUIDs](docs/BE26-order-public-ids.md), [BE27 forgot password and delete account](docs/BE27-forgot-password-delete-account.md), [BE28 wishlist](docs/BE28-wishlist.md), [BE29 discount codes](docs/BE29-discount-codes.md), [BE30 announcement bar](docs/BE30-announcement-bar.md).
 
 ## Image credits
 

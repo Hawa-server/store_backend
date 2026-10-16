@@ -799,6 +799,36 @@ Removes a product. **200 even if it wasn't saved** (the result is the same: it i
 
 **Errors:** 401 not logged in; 403 without the `X-Requested-With` header; 429 too many changes.
 
+### Announcement bar
+
+#### `GET /api/announcement`
+
+*(BE30)* The short message for the thin bar at the top of **every shop page**, usually promoting a discount code.
+
+- **Login required:** no
+- **Caching:** `Cache-Control: public, max-age=60`. Browsers may reuse the answer for a minute, so an admin change can take **up to 60 seconds** to appear.
+
+**200 OK**, when there's something to show:
+
+```json
+{ "announcement": { "message": "Use WELCOME5 for 5% off your first order", "code": "WELCOME5", "id": "4960abeacb40" } }
+```
+
+**200 OK**, when there's nothing to show (switched off, past its end date, or its code can't be used right now):
+
+```json
+{ "announcement": null }
+```
+
+**For the frontend:**
+- When `announcement` is `null`, **don't show the bar** (no empty space).
+- `code` is `null` for a message-only bar. When there is a code, show it highlighted with a **Copy** button. It **always works at checkout**: the server hides the bar by itself when the code is switched off, expired, used up or not started.
+- **Show `message` as plain text.** In React, `{announcement.message}` is safe. **Never** use `dangerouslySetInnerHTML`: the message is returned exactly as the admin typed it, so `<b>` or `<script>` must appear as those characters.
+- **Close button:** remember the `id` the shopper closed (e.g. in `localStorage`), and hide the bar while the current `id` is the same. `id` changes whenever the message or the code changes, so a **new** announcement shows again.
+- Fetch it once per page load (or once per visit); the cache keeps it cheap.
+
+**Errors:** none expected (500 only if the server has a problem).
+
 ### Settings
 
 #### `GET /api/settings/currency`
@@ -2305,6 +2335,68 @@ Show the message, put `currentStock` into the stock field, and let the admin che
 **200 OK:** `{ "discountCode": { … } }`
 
 **Errors:** as `POST`, plus `fields._` "Send at least one field to change."; 404 `"Discount code not found."`; 409 `"This code has been used, so its code, type and value can't change. Create a new code instead."`
+
+#### `GET /api/admin/announcement`
+
+*(BE30)* The saved announcement, the linked code, and whether the bar is showing right now.
+
+- **Login required:** yes · **Admin required:** yes · `Cache-Control: no-store`
+
+**200 OK**
+
+```json
+{
+  "announcement": {
+    "enabled": true,
+    "message": "Use WELCOME5 for 5% off your first order",
+    "codeId": 7,
+    "endsAt": null,
+    "code": { "id": 7, "code": "WELCOME5", "status": "expired" },
+    "isShowing": false,
+    "reason": "The linked code has expired"
+  }
+}
+```
+
+- `code.status` uses the discount code statuses (`active`, `scheduled`, `expired`, `used_up`, `off`); `code` is `null` when no code is linked.
+- `isShowing` is what shoppers see right now. When it's `false`, `reason` says why: `"The announcement is switched off"`, `"The message is empty"`, `"The end date has passed"`, `"The linked code is switched off"`, `"The linked code hasn't started yet"`, `"The linked code has expired"`, `"The linked code has reached its limit"`, or `"The linked code no longer exists"`. Show it under the form so the admin knows why the bar isn't visible.
+- Before the admin has ever saved one: `enabled: false`, `message: ""`, `codeId: null`, `endsAt: null`.
+
+**Errors:** 401; 403.
+
+#### `PUT /api/admin/announcement`
+
+*(BE30)* Saves the whole announcement (it **replaces** what was saved).
+
+- **Login required:** yes · **Admin required:** yes
+- **Headers:** `X-Requested-With: XMLHttpRequest`, `Content-Type: application/json`
+
+| Field | Type | Rules |
+|---|---|---|
+| `enabled` | boolean | Required |
+| `message` | string | Plain text, trimmed, **5–120 characters on one line** (no line breaks). Required when `enabled` is `true`; may be `""` while off (e.g. to prepare one). HTML isn't changed or removed: it's stored and shown as text |
+| `codeId` | number or `null` | Optional: a discount code `id` (from `GET /api/admin/discount-codes`) to show with the message. It may currently be off, expired or used up (the bar then stays hidden until the code works) |
+| `endsAt` | string or `null` | Optional Ghana day `YYYY-MM-DD`, **included** (hidden from the next midnight), not in the past. **Only without a code**: with a code, the code's own dates apply |
+
+```json
+{ "enabled": true, "message": "Use WELCOME5 for 5% off your first order", "codeId": 7, "endsAt": null }
+```
+
+```json
+{ "enabled": true, "message": "Free delivery in Kumasi this week", "codeId": null, "endsAt": "2026-10-20" }
+```
+
+**200 OK:** `{ "announcement": { … } }` (the same shape as `GET`), so the form can show `isShowing` and `reason` straight away.
+
+**Errors**
+
+| Status | Code | When |
+|---|---|---|
+| 400 | `INVALID_REQUEST` | `fields.message`: "The message must be 5–120 characters, on one line." or "Enter a message (5–120 characters) to switch the bar on." |
+| 400 | `INVALID_REQUEST` | `fields.codeId`: "Choose an existing discount code." |
+| 400 | `INVALID_REQUEST` | `fields.endsAt`: "The end date can't be in the past.", "Use a date like 2026-12-31.", or "With a linked code, the code's own dates apply. Remove the end date." |
+| 400 | `INVALID_REQUEST` | `fields.enabled`: missing or not true/false |
+| 401 / 403 | | Not logged in / not an admin (or no `X-Requested-With`) |
 
 #### `GET /api/admin/orders`
 

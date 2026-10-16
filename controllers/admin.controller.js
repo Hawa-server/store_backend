@@ -17,6 +17,7 @@ const settingsService = require('../services/settings/settings.service');
 const adminProductService = require('../services/product/adminProduct.service');
 const adminDeliveryService = require('../services/delivery/adminDelivery.service');
 const adminDiscountService = require('../services/discount/adminDiscount.service');
+const announcementService = require('../services/announcement/announcement.service');
 const AppError = require('../utils/AppError');
 const { findOrderId } = require('../services/order/order.service');
 
@@ -295,6 +296,25 @@ async function updateDiscountCode(req, res) {
   res.json({ discountCode: await adminDiscountService.updateCode(req.valid.params.id, req.valid.body, req.user.id) });
 }
 
+/*
+ * GET /api/admin/announcement   (BE30)
+ * Receives: nothing. Returns: 200 { announcement } with the saved settings,
+ *           the linked code and whether the bar is showing (and why not).
+ */
+async function getAnnouncement(req, res) {
+  res.set('Cache-Control', 'no-store');
+  res.json({ announcement: await announcementService.adminAnnouncement() });
+}
+
+/*
+ * PUT /api/admin/announcement   (BE30)
+ * Receives: req.valid.body = { enabled, message, codeId, endsAt } and req.user.
+ * Returns: 200 { announcement } (the admin view after saving).
+ */
+async function saveAnnouncement(req, res) {
+  res.json({ announcement: await announcementService.saveAnnouncement(req.valid.body, req.user.id) });
+}
+
 module.exports = {
   listProducts,
   getProduct,
@@ -319,4 +339,6 @@ module.exports = {
   getDiscountCode,
   createDiscountCode,
   updateDiscountCode,
+  getAnnouncement,
+  saveAnnouncement,
 };
