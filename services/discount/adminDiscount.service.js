@@ -19,24 +19,12 @@ const { Op, UniqueConstraintError, col, where: sqlWhere } = require('sequelize')
 const { sequelize, DiscountCode, DiscountRedemption, Order } = require('../../models');
 const AppError = require('../../utils/AppError');
 const { accraDayRange } = require('../../utils/dates');
+// The status rule lives in discount.service.js (shared with the announcement bar, BE30).
+const { statusOf } = require('./discount.service');
 const { toLimitOffset, toPage } = require('../../utils/pagination');
 
 const PAGE_SIZE = 20;
 const DAY_MS = 24 * 60 * 60 * 1000;
-
-/*
- * statusOf(code, now)
- * Receives: a DiscountCode and the current time.
- * Returns: 'off' | 'scheduled' | 'expired' | 'used_up' | 'active', in that order
- *          of priority (an expired code that was also switched off shows "off").
- */
-function statusOf(code, now = new Date()) {
-  if (!code.isActive) return 'off';
-  if (code.startsAt && now < code.startsAt) return 'scheduled';
-  if (code.endsAt && now >= code.endsAt) return 'expired';
-  if (code.usageLimit !== null && code.timesUsed >= code.usageLimit) return 'used_up';
-  return 'active';
-}
 
 /*
  * statusWhere(status, now)
